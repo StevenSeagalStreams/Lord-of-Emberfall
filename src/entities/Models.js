@@ -28,6 +28,27 @@ import { buildSwarmer } from './monsters/Swarmer.js';
  */
 export { taperedLimb, mass, plate, lathe, extrude, tasset, finBlade, trimRing, characterMaterials };
 
+// ---------------------------------------------------------------------------
+// G1 (playtest round 2, verbatim): "made bigger, scaled up 2 times"
+// ---------------------------------------------------------------------------
+//
+// Applied *inside* the builders, never by asking the callers for a bigger
+// `height` -- Player.js and Monster.js are combat/physics files we do not
+// own, and the `height` they hold also sizes the Entity's collision
+// cylinder, which this pass must not touch. Every bone length and attached
+// part below is expressed as `H * fraction`, so multiplying the height fed
+// into `CharacterRig`'s constructor scales an entire body (and, because the
+// cloak/scabbard/helm crest are themselves `H`-derived, everything hung off
+// it) uniformly -- proportions are untouched, only legibility changes.
+//
+// The hero's default 1.9 unit height becomes 3.8: the top of the playtest's
+// requested 3.5-3.8 band. Monster heights come from `MonsterProfiles.js`
+// (combat pillar, not ours) via `Monster.js`'s `opts.height`; applying the
+// same factor to whatever they pass in preserves the hero-vs-monster height
+// *ratio* exactly, so "relative threat" still reads (see buildSkeleton and
+// buildMonster's swarmer case below for where each kind actually gets it).
+export const VISUAL_SCALE = 2.0;
+
 /** Attach a pre-built Object3D (groups, InstancedMesh) to a bone and register
  * every mesh inside it for disposal -- `CharacterRig.attach()` only covers the
  * single-geometry case. */
@@ -115,7 +136,7 @@ export function buildWarrior(opts = {}) {
     ...opts.silhouette,
   };
   const rig = new CharacterRig({
-    height: opts.height ?? 1.9,
+    height: (opts.height ?? 1.9) * VISUAL_SCALE,
     build: opts.build ?? 1.30,
     headScale: opts.headScale ?? 0.78, // deliberately small head; broad frame reads huge next to it
     archetype: 'warrior',
@@ -317,7 +338,14 @@ export function buildWarrior(opts = {}) {
   // contract.
   rig.addBone('weaponMount', 'handR', 0, 0, 0);
   rig.defineWeaponSlot('weaponMount', (spec) => buildSword({ ...spec, materials: M }),
-    { pivot: [0, -0.06, 0.02], rotation: [-Math.PI * 0.52, 0, 0.12] });
+    {
+      // This pivot is a small absolute grip correction, not H-derived like
+      // everything else in this file, so it needs the same VISUAL_SCALE
+      // factor applied by hand to stay proportioned against the new
+      // (also-scaled, see buildSword) blade in the now-bigger hand.
+      pivot: [0, -0.06 * VISUAL_SCALE, 0.02 * VISUAL_SCALE],
+      rotation: [-Math.PI * 0.52, 0, 0.12],
+    });
 
   // ---- cloak: verlet cloth, a real hanging mass with visible sway -------
   // Wider at the hem than the yoke (a trapezoid, not a rectangle) so it
@@ -326,13 +354,47 @@ export function buildWarrior(opts = {}) {
   // for -- so it pops as "character" against grey stone even from the
   // top-down-ish gameplay camera, instead of disappearing as another grey
   // lump next to the armour.
+  //
+  // Playtest G2 ("spread out like a flat board... needs to float down his
+  // body"): `pinCols: 2` is the actual fix -- two throat clasps instead of
+  // pinning the full 11-wide shoulder line rigid (see Cloth.js's postmortem
+  // docblock for the full diagnosis: pin width, soft bend, drag-vs-gravity
+  // balance, and the `spreadLimit` collision stand-in all had to move
+  // together -- and for the false start where a first version of that last
+  // one quietly recreated the board it was meant to fix).
+  // Segment count is up from 9x12 so the now-larger panel can still curve
+  // and fold instead of faceting into flat plates. `dragScale`/`damping`/
+  // `iterations` are all *down* from before -- gravity, not wind, drives the
+  // hang now; Animation.js supplies the actual force balance.
   rig.addBone('cloakAnchor', 'chest', 0, H * 0.092, -H * 0.062);
   addCloak(rig, 'cloakAnchor', {
-    cols: 9, rows: 12,
-    width: H * 0.92 * SIL.cloakScale, hemWidth: H * 1.30 * SIL.cloakScale,
-    length: H * 1.02 * SIL.cloakScale,
-    curve: H * 0.09, forwardBias: H * 0.05, maxForwardZ: H * 0.10,
-  }, M.cloth, { color: SIL.cloakColor, roughness: 0.85, dragScale: 1.05, damping: 0.955, iterations: 4 });
+    cols: 11, rows: 17,
+    pinCols: 2, spreadLimit: 1.45,
+    // Proportions are anatomical fractions of H and have to stay that way.
+    // An earlier pass at G2 stacked three multipliers -- the doubled
+    // VISUAL_SCALE height, then fractions raised above 1.0 to honour "cloak
+    // maybe made a bit bigger", then cloakScale -- which put the hem at
+    // H * 1.55: a sheet 5.9 units wide hanging off a body 3.8 units tall,
+    // wider than the character is tall and longer than he is. The sim was
+    // doing its job correctly, and the correct result was a black slab. That
+    // is the "flat board" defect arriving by a second road -- not pinning,
+    // not drag, just a garment several times too large.
+    //
+    // A cloak reads as a cloak when it hangs from about the shoulder span,
+    // flares to a little under body height at the hem, and ends around
+    // mid-calf. In absolute terms it is still much bigger than the pre-G1
+    // cloak, because H itself doubled.
+    // Length is capped short of floor-length on purpose. Hung from a chest
+    // anchor at roughly 0.7H, a 0.62H drop puts the hem almost on the
+    // ground, and from the game's behind-and-above camera that erases the
+    // entire body -- which loses G1/F5 ("needs to be more recognizable...
+    // so you can tell what class you are") in the act of fixing G2. Ending
+    // around mid-shin keeps the cloak's mass and its motion while leaving
+    // the legs, boots and stance visible underneath.
+    width: H * 0.42 * SIL.cloakScale, hemWidth: H * 0.72 * SIL.cloakScale,
+    length: H * 0.46 * SIL.cloakScale,
+    curve: H * 0.055, forwardBias: H * 0.03, maxForwardZ: H * 0.07,
+  }, M.cloth, { color: SIL.cloakColor, roughness: 0.85, dragScale: 0.42, damping: 0.955, iterations: 3 });
 
   // Everything above this line was attached with plain `attach()` calls that
   // share material identity within a bone (chest metal x2, pelvis metal x3,
@@ -349,7 +411,11 @@ export function buildWarrior(opts = {}) {
  * enemy. Must read utterly differently from the hunched swarmer. */
 export function buildSkeleton(opts = {}) {
   const rig = new CharacterRig({
-    height: opts.height ?? 1.78,
+    // See VISUAL_SCALE's docblock above buildWarrior -- applied here too, on
+    // whatever height the caller passed (Monster.js's `this.height`, which
+    // is `MonsterProfiles.js`'s 1.78 by default), so a lone skeleton keeps
+    // reading exactly as tall relative to the hero as it always did.
+    height: (opts.height ?? 1.78) * VISUAL_SCALE,
     build: opts.build ?? 0.74,
     headScale: opts.headScale ?? 0.92,
     archetype: 'skeleton',
@@ -416,12 +482,20 @@ export function buildSkeleton(opts = {}) {
 
   // Tattered cloak scraps, now real cloth (was a static plane) so it swings
   // and settles with movement instead of reading as a cardboard cutout.
+  // Bumped from 3 columns -- a 3-wide strip is too coarse to curve at all,
+  // only pivot as a rigid fan (Cloth.js postmortem item 5) -- and given the
+  // same pinCols/spreadLimit/lower-drag treatment as the hero cloak so these
+  // don't stand out as boards next to it.
   rig.addBone('ragAnchorL', 'spine', -H * 0.03, L.spine * 0.6, -H * 0.02);
   rig.addBone('ragAnchorR', 'spine', H * 0.026, L.spine * 0.55, -H * 0.02);
-  addCloak(rig, 'ragAnchorL', { cols: 3, rows: 6, width: H * 0.10, length: H * 0.30, curve: 0.01 }, M.cloth,
-    { tint: 0x8a8578, dragScale: 0.5, damping: 0.94 });
-  addCloak(rig, 'ragAnchorR', { cols: 3, rows: 5, width: H * 0.08, length: H * 0.24, curve: -0.01 }, M.cloth,
-    { tint: 0x8a8578, dragScale: 0.5, damping: 0.94 });
+  addCloak(rig, 'ragAnchorL', {
+    cols: 4, rows: 8, pinCols: 1, spreadLimit: 1.8,
+    width: H * 0.12, hemWidth: H * 0.16, length: H * 0.36, curve: 0.015,
+  }, M.cloth, { tint: 0x8a8578, dragScale: 0.4, damping: 0.94, iterations: 3 });
+  addCloak(rig, 'ragAnchorR', {
+    cols: 4, rows: 7, pinCols: 1, spreadLimit: 1.8,
+    width: H * 0.10, hemWidth: H * 0.13, length: H * 0.30, curve: -0.015,
+  }, M.cloth, { tint: 0x8a8578, dragScale: 0.4, damping: 0.94, iterations: 3 });
 
   // Same draw-call bake as buildWarrior -- this rig is spawned up to ~56x
   // in a dungeon room, so every merged pair here is a real, multiplied win
@@ -498,6 +572,15 @@ export function buildSword(opts = {}) {
     g.add(gem);
   }
 
+  // This blade is authored in absolute units, not `H`-derived like the rig
+  // it's held by -- it has no character height to scale from. Player.js
+  // still attaches its starting sword directly (`buildSword({ materials })`,
+  // no height in the opts it passes -- see the docblock above buildWarrior's
+  // weapon-slot registration), so the *only* place this can pick up G1's 2x
+  // is here, on the assembled group, so it stays proportioned exactly like
+  // it always was, just sized to match the now-bigger hand holding it.
+  g.scale.setScalar(opts.scale ?? VISUAL_SCALE);
+
   return g;
 }
 
@@ -513,7 +596,31 @@ export function buildSword(opts = {}) {
  */
 export function buildMonster(kind, opts = {}) {
   switch (kind) {
-    case 'swarmer': return buildSwarmer(opts);
+    case 'swarmer':
+      // Swarmer.js lives under monsters/ but is *not* an owned file this
+      // pass (only new files under monsters/ are, per the mission brief) --
+      // so VISUAL_SCALE is applied here, to the height handed to it, instead
+      // of inside that file. buildSwarmer expresses every dimension as
+      // `H * fraction` off the height it receives (see its own docblock),
+      // so scaling the input height has exactly the same effect as if the
+      // multiplier lived inside buildSwarmer itself -- this is a read-only
+      // wrapper, not a workaround. Default matches Swarmer.js's own opts
+      // fallback (1.02) in case a caller ever invokes buildMonster with no
+      // height at all.
+      {
+        const built = buildSwarmer({ ...opts, height: (opts.height ?? 1.02) * VISUAL_SCALE });
+        // Draw-call hygiene (VISION.md "Open findings"): buildWarrior and
+        // buildSkeleton both call `rig.mergeStaticParts()` themselves once
+        // fully built; buildSwarmer can't, because Swarmer.js is not an
+        // owned file this pass. `mergeStaticParts()` is a generic
+        // CharacterRig method that only walks the already-built bone
+        // hierarchy, so calling it here from the outside, after
+        // construction, gets the swarmer the same per-bone merge every
+        // other kind gets -- with 56 monsters on screen and swarmers among
+        // the most numerous, this is a real, multiplied win, not a no-op.
+        built.rig.mergeStaticParts();
+        return built;
+      }
     case 'skeleton': return buildSkeleton(opts);
     default: return buildSkeleton(opts);
   }

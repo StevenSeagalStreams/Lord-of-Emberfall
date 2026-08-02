@@ -245,7 +245,11 @@ export class HUD {
     let best = null, bestDist = HOVER_RADIUS * HOVER_RADIUS;
     for (const m of monsters) {
       if (!m || !m.alive) continue;
-      this._project(m.position.x, m.position.y + m.height * 0.6, m.position.z, camera, this._scratchScreen);
+      // visualHeight (Entity.js): since G1 scaled the art up, the physics
+      // capsule is half the size of the model. The player aims at the body
+      // they can see, not at the capsule.
+      const vh = m.visualHeight ?? m.height;
+      this._project(m.position.x, m.position.y + vh * 0.6, m.position.z, camera, this._scratchScreen);
       if (!this._scratchScreen.visible) continue;
       const dx = this._scratchScreen.x - mx;
       const dy = this._scratchScreen.y - my;
@@ -331,7 +335,12 @@ export class HUD {
       const c = buf[i];
       if (!c.m) { slot.el.style.display = 'none'; continue; }
 
-      this._project(c.m.position.x, c.m.position.y + c.m.height + 0.32, c.m.position.z, camera, this._scratchScreen);
+      // A nameplate floats above the head, so it must use the *visible* head
+      // (Entity.visualHeight), not the physics capsule -- with G1's scaled
+      // art the capsule is half the model, which parked every plate at the
+      // monster's waist.
+      const vh = c.m.visualHeight ?? c.m.height;
+      this._project(c.m.position.x, c.m.position.y + vh + 0.32, c.m.position.z, camera, this._scratchScreen);
       if (!this._scratchScreen.visible) { slot.el.style.display = 'none'; continue; }
 
       slot.el.style.display = 'block';

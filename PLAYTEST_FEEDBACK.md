@@ -78,8 +78,8 @@ Verified: stub `{0,0}` now yields base `[14,24]`; gear `+6/+10` yields `[20,34]`
 
 | # | Task | Owner | Status |
 | --- | --- | --- | --- |
-| G1 | **Characters 2x scale + far more detail** — hero and every enemy. | characters | in progress |
-| G2 | **Cloak reads as a flat board.** Must hang loose and drape down the body, not stand out rigid behind it. | characters | in progress |
+| G1 | **Characters 2x scale + far more detail** — hero and every enemy. | characters | scale landed; detail not yet judged |
+| G2 | **Cloak reads as a flat board.** Must hang loose and drape down the body, not stand out rigid behind it. | characters | **FIXED** — see below |
 | G3 | **Fire must fly with a trail.** | vfx + combat | **FIXED** — see below |
 | G4 | **Lightning must be a line that reaches the target.** | vfx + combat | **FIXED** — see below |
 
@@ -174,3 +174,49 @@ takes. Stated rather than glossed.
 Harness: `shots/spellshot.mjs` (gitignored — a throwaway adaptation of
 `src/fx/burst.mjs` that stages and fires a real cast instead of running the
 demo rotation).
+
+---
+
+## G2 — the flat board had a second cause (2026-08-02)
+
+The characters agent rebuilt the cloth solver and wrote a good postmortem into
+`Cloth.js`: full-width shoulder pinning, an over-strong bend constraint, drag
+beating gravity, and a first "body pull" attempt that quietly recreated the
+board it was meant to remove. All of that was diagnosed correctly and fixed.
+
+**The cloak was still a flat black slab afterwards**, because none of those
+were the cause that survived. The size was.
+
+Three multipliers had stacked: `VISUAL_SCALE` doubled the character height,
+the fractions were raised above 1.0 to honour "cloak maybe made a bit bigger",
+and `cloakScale` multiplied again. The hem ended up at `H * 1.55` — a sheet
+**5.9 units wide hanging off a body 3.8 units tall**, wider than the character
+and longer than him. The solver was working perfectly, and the correct
+simulation of a garment that size is a rectangle that fills the frame.
+
+Reset to anatomical fractions of H (0.42 shoulder span, 0.72 hem, 0.46 drop).
+The same solver now produces visible folds, an asymmetric silhouette, and a
+raised trailing edge as the hero turns — cloth, not cardboard. In absolute
+terms it is still much larger than the pre-G1 cloak, because H itself doubled.
+
+The drop is deliberately capped short of floor-length. Hung from a chest
+anchor, a full-length cloak erases the entire body from this game's
+behind-and-above camera, which would have lost F5/G1 ("more recognizable... so
+you can tell what class you are") in the act of fixing G2.
+
+### Fallout from the 2x scale: body-anchored effects
+
+Scaling the art did not scale the physics capsule (deliberately — collision
+sizing is combat's and sits under a parked feel gate). Everything anchoring to
+a body was still measuring the capsule, so **nameplates sat at the monsters'
+waists and blood spurted at knee height.** Visible in `shots/f4/combat.png`
+once you know to look.
+
+`Entity.visualHeight` now reports the rig's real height, and the nameplate
+anchor, hover pick, hit fx and kill fx use it. `height` stays what it was for
+anything physical.
+
+**Open question for Borka, not decidable here:** the characters are twice as
+tall but the rooms, corridors and doorways are not. Whether the world should
+grow to match, or the characters settle somewhere below 2x, is a direction
+call.

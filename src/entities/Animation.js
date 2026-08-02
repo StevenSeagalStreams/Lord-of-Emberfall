@@ -518,6 +518,15 @@ export class Animator {
    * anchor bone's local frame right before stepping the solver -- see
    * Cloth.js for why that rotation has to happen here rather than in the
    * cloth itself.
+   *
+   * Playtest G2 root cause (see Cloth.js's postmortem docblock for the full
+   * diagnosis): the old drag here -- `dragScale` up to 0.6 plus a 0.35 lift,
+   * times a run speed of up to 7 -- landed in the same order of magnitude as
+   * gravity's 9.8, so the cloak spent as much time being blown backward as
+   * it did hanging down. That reads exactly as "flat board behind him", not
+   * cloth. Gravity is now left alone and drag is cut to a genuine minority
+   * force, so the cloak *hangs* by default and only visibly swings/flares
+   * when `flare` (speed or a hard turn, computed below) says it should.
    */
   _updateCloths(dt, speed, facing) {
     const rig = this.rig;
@@ -528,6 +537,19 @@ export class Animator {
     const spd = Math.min(speed, 7);
     const ws = this._windSeed;
 
+    // Turn rate: a hard pivot should flare the cloak even at low forward
+    // speed (spinning to face a new attacker, say), not just raw movement --
+    // the playtest asked for both ("sways with movement... flares only when
+    // the character moves fast or turns hard").
+    if (this._prevClothFacing === undefined) this._prevClothFacing = facing;
+    const dFacing = Math.atan2(Math.sin(facing - this._prevClothFacing), Math.cos(facing - this._prevClothFacing));
+    const turnRate = dt > 1e-5 ? Math.abs(dFacing) / dt : 0;
+    this._prevClothFacing = facing;
+
+    const speedFlare = THREE.MathUtils.clamp(spd / 5.0, 0, 1);
+    const turnFlare = THREE.MathUtils.clamp(turnRate / 3.2, 0, 1);
+    const flare = Math.max(speedFlare, turnFlare);
+
     for (const entry of rig.cloths) {
       const cloth = entry.cloth;
       const bone = rig.bones[entry.anchorBone];
@@ -535,12 +557,14 @@ export class Animator {
 
       _gWorld.set(0, -9.8, 0);
       // Motion drag: the cloth trails opposite the direction of travel, with
-      // a little lift so it billows rather than just hanging straight back.
-      _dWorld.set(-fwdX, 0.35, -fwdZ).multiplyScalar(spd * (entry.dragScale ?? 0.6));
+      // a slight lift so it billows rather than dragging flat along the
+      // ground -- but small enough now that gravity always wins the hang.
+      _dWorld.set(-fwdX, 0.10, -fwdZ).multiplyScalar(spd * (entry.dragScale ?? 0.35));
       // Ambient breeze, out of phase per character so a pack doesn't ripple
-      // in unison.
-      _dWorld.x += Math.sin(t * 0.6 + ws) * 0.55;
-      _dWorld.z += Math.cos(t * 0.44 + ws * 1.7) * 0.45;
+      // in unison -- calmer at rest, a little livelier once actually moving.
+      const breeze = 0.4 + flare * 0.6;
+      _dWorld.x += Math.sin(t * 0.6 + ws) * 0.16 * breeze;
+      _dWorld.z += Math.cos(t * 0.44 + ws * 1.7) * 0.14 * breeze;
 
       rig.getWorldQuaternion(entry.anchorBone, _qInv).invert();
       _gLocal.copy(_gWorld).applyQuaternion(_qInv);
@@ -551,6 +575,7 @@ export class Animator {
         drag: _dLocal,
         damping: entry.damping ?? 0.96,
         iterations: entry.iterations ?? 3,
+        flare,
       });
     }
   }

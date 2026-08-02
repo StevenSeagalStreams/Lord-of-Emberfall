@@ -90,6 +90,25 @@ export class Entity {
   }
 
   /**
+   * How tall this body *looks*, as opposed to `height`, which is the physics
+   * capsule combat reasons about.
+   *
+   * These stopped being the same number when G1 scaled the art up: Models.js
+   * multiplies the height it feeds `CharacterRig` by `VISUAL_SCALE`, quite
+   * deliberately, because the collision size and monster spacing belong to
+   * combat and are under a parked feel gate. The consequence is that anything
+   * anchoring to a body -- a floating nameplate, a blood spurt, a death puff
+   * -- lands at roughly half the model if it uses `height`, which is why
+   * nameplates were sitting at the skeletons' waists.
+   *
+   * So: use `height` for anything physical, and this for anything you are
+   * placing *on the visible body*.
+   */
+  get visualHeight() {
+    return this.rig?.spec?.height ?? this.height;
+  }
+
+  /**
    * Total planar motion, for animation gait-blending and footstep fx --
    * includes the current knockback contribution (even though knockback is
    * deliberately NOT folded into `velocity` for position integration, see
@@ -215,7 +234,8 @@ export class Entity {
     // scale) and leaves how it looks to the vfx pillar. Only fired for a hit
     // that actually landed (dealt > 0) -- a 0-damage graze draws nothing.
     if (dealt > 0 && this._world?.bus) {
-      const hitPos = { x: this.position.x, y: this.position.y + this.height * 0.55, z: this.position.z };
+      // visualHeight, not height -- blood belongs on the body you can see.
+      const hitPos = { x: this.position.x, y: this.position.y + this.visualHeight * 0.55, z: this.position.z };
       const fxDir = opts.direction ? { x: opts.direction.x, y: 0, z: opts.direction.z } : null;
       // Armoured targets (skeleton/brute/the player) read as metal-on-metal;
       // unarmoured ones (swarmer) read as flesh. One deterministic rule off
@@ -293,7 +313,7 @@ export class Entity {
     // reuses `this._collapse`'s already-resolved fallback (killing blow's
     // direction, or facing if the kill had none) rather than re-deriving it.
     if (this._world?.bus) {
-      const killPos = { x: this.position.x, y: this.position.y + this.height * 0.4, z: this.position.z };
+      const killPos = { x: this.position.x, y: this.position.y + this.visualHeight * 0.4, z: this.position.z };
       const killScale = THREE.MathUtils.clamp(0.8 + forceFrac * 0.6, 0.8, 2.0);
       this._world.bus.emit('fx:request', {
         kind: 'blood_kill',

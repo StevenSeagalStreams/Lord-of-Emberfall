@@ -256,3 +256,17 @@ frame has no reward cue and no readable material on its largest objects.
 Correction backlog, in order: un-black the trees (materials/lighting), rebuild
 the ground as moor rather than dune, sky and fog per the colour script, zone
 props, then core-loop proof.
+
+### Draw calls: the merge did not move the number (2026-08-02, later)
+
+`CharacterRig.mergeStaticParts()` now bakes each rig's static meshes down per
+(bone, material) pair, added during the G1 character pass specifically to
+attack the finding above. Measured at default catacombs framing afterwards:
+**885 draws / 728,583 tris**, against **865** before the character work began.
+
+So the merge did not resolve it. That is not a claim the merge does nothing —
+the G1 pass also roughly doubled every model's part count and added real cloth
+— but the two cancelled out, and the honest reading is that **the character
+draw-call finding above is still open.** Anyone reopening it should measure a
+single rig in isolation before and after the bake rather than trusting a
+whole-scene number that has two changes in it.
