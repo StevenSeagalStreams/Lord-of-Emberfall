@@ -680,13 +680,34 @@ console.log('\n[10] Player integration -- real class, not a mock (buffering, D1 
   // resolveOverlaps() every frame, exactly as main.js's real phase order
   // does (entities update, THEN overlap resolution burns one hit-stop
   // frame), so the freeze releases on schedule instead of stalling dt.
+  // Watch for the CAST's lock lifting, rather than asserting the animator is
+  // idle at an arbitrary frame.
+  //
+  // Those are not the same claim, and conflating them made this fail for a
+  // correct reason. The `p4.attack()` above is refused during the cast -- and
+  // being refused, it is BUFFERED, which is exactly what input buffering is
+  // for. So the instant the cast lock lifts, that buffered swing fires and the
+  // animator is legitimately busy again:
+  //
+  //     f=0  busy=true   cast lock
+  //     f=17 busy=false  cast lock releases      <- what this test means
+  //     f=18 busy=true   buffered swing fires    <- also correct
+  //     f=57 busy=false  swing completes
+  //
+  // Firebolt's damage now lands on projectile arrival rather than on cast, so
+  // its hit-stop occurs later and can push that swing past frame 60. Assert
+  // the thing that matters instead: the lock released within its own duration.
+  const lockFrames = Math.ceil(SKILLS.firebolt.lockDuration / DT);
+  let lockReleasedAt = -1;
   for (let i = 0; i < 60; i++) {
     skills4.update(DT);
     p4.update(DT, { colliders: null });
     m.update(DT, { colliders: null, monsters: [m], player: p4 });
     resolveOverlaps([p4, m], 1);
+    if (lockReleasedAt < 0 && p4.animator.busy === false) lockReleasedAt = i;
   }
-  check('the lock releases once lockDuration elapses', p4.animator.busy === false);
+  check('the cast lock releases once lockDuration elapses (a buffered melee swing may legitimately follow it)',
+    lockReleasedAt >= 0 && lockReleasedAt <= lockFrames + 4);
   check('the skeleton took damage from the resolved cast', m.health < m.maxHealth);
   HitStop.reset();
 }
@@ -925,6 +946,78 @@ console.log('\n[13] noclip -- the debug console\'s player.noclip flag is now hon
   for (let i = 0; i < 30; i++) ghosting.update(1 / 60, { colliders: solidEverywhere });
   check('toggling noclip back off re-engages collision on the very next update',
     Math.abs(ghosting.position.x - xBeforeReclip) < 1e-6);
+}
+
+// ---------------------------------------------------------------------------
+console.log('\n[14] hold-to-move -- holding the button steers continuously without re-pathing every frame');
+// ---------------------------------------------------------------------------
+{
+  // F1 from the playtest: "diablo players hold down the mouse button instead
+  // of clicking to move". main.js's input block calls orderHold() on every
+  // frame the button is down. Two properties matter and they pull against
+  // each other: it must actually follow a moving cursor (feel), and it must
+  // not run A* sixty times a second to do it (cost). Both are asserted here.
+  const DT = 1 / 60;
+
+  /** Nav stub that counts A* calls, so "does it re-path every frame" is a
+   *  measurement rather than a claim. `blocked` flips line-of-sight off to
+   *  exercise the fallback branch. */
+  function makeNav(blocked = false) {
+    return {
+      calls: 0,
+      lineOfSight() { return !blocked; },
+      path(sx, sz, tx, tz) { this.calls++; return [{ x: tx, z: tz }]; },
+    };
+  }
+
+  // -- clear line of sight: steering only, zero A* --
+  const nav = makeNav(false);
+  const ph = new Player();
+  const startX = ph.position.x;
+  for (let i = 0; i < 60; i++) {
+    ph.orderHold(20, 0, nav, null);          // cursor held on one spot for a second
+    ph.update(DT, { colliders: null });
+  }
+  check('holding the button walks the player toward the held point', ph.position.x > startX + 1);
+  check('a held cursor in clear line of sight runs A* zero times (it steers straight at the cursor)',
+    nav.calls === 0);
+
+  // -- the cursor moves mid-hold: the player must follow the LIVE point --
+  const navSteer = makeNav(false);
+  const ps = new Player();
+  for (let i = 0; i < 40; i++) { ps.orderHold(20, 0, navSteer, null); ps.update(DT, { colliders: null }); }
+  const xAtTurn = ps.position.x, zAtTurn = ps.position.z;
+  for (let i = 0; i < 40; i++) { ps.orderHold(xAtTurn, 20, navSteer, null); ps.update(DT, { colliders: null }); }
+  check('moving the cursor while holding redirects the player without a click',
+    ps.position.z > zAtTurn + 0.5);
+
+  // -- blocked line: A* is allowed, but not once per frame --
+  const navBlocked = makeNav(true);
+  const pb = new Player();
+  for (let i = 0; i < 60; i++) {
+    pb.orderHold(20, 0, navBlocked, null);
+    pb.update(DT, { colliders: null });
+  }
+  check('a blocked held point does fall back to A*', navBlocked.calls > 0);
+  check('...but re-paths only as the held point drifts, not on all 60 frames',
+    navBlocked.calls < 15);
+
+  // -- holding over a hostile attacks it, and re-affirms the order only once --
+  const navAtk = makeNav(false);
+  const pa = new Player();
+  const foe = new Monster({ kind: 'skeleton' });
+  foe.position.set(1.0, 0, 0);
+  for (let i = 0; i < 30; i++) pa.orderHold(pa.position.x, pa.position.z, navAtk, foe);
+  check('holding the cursor over a hostile targets it', pa.target === foe);
+  check('holding on an already-engaged target does not re-issue the order every frame',
+    navAtk.calls <= 1);
+
+  // -- arriving under the cursor settles instead of vibrating on the spot --
+  const navArrive = makeNav(false);
+  const pr = new Player();
+  pr.orderHold(pr.position.x + 0.05, pr.position.z, navArrive, null);
+  check('a held cursor already under the player clears the path rather than chasing a fraction of a unit',
+    !pr.path || pr.path.length === 0);
 }
 
 // ---------------------------------------------------------------------------

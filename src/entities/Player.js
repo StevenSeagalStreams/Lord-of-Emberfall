@@ -74,6 +74,9 @@ export class Player extends Entity {
     /** @type {Entity|null} */
     this.target = null;
     this.moveOrder = null;
+    /** Last ground point orderHold() actually ran A* to, so a held cursor
+     *  sitting still does not re-path every frame. See orderHold(). */
+    this._heldGroundTarget = null;
 
     this._tmpDir = new THREE.Vector3();
   }
@@ -170,7 +173,14 @@ export class Player extends Entity {
     // re-path every frame, which is exactly the hitch the mission calls out.
     const last = this._heldGroundTarget;
     const drifted = !last || Math.hypot(last.x - worldX, last.z - worldZ) > 0.75;
-    const exhausted = !this.path || this.pathIndex >= this.path.length - 1;
+    // "Exhausted" means the path has actually run out -- Entity._followPath
+    // calls clearPath() (which nulls `path`) the frame it consumes the final
+    // waypoint, so `!this.path` is the whole test. This used to also count
+    // `pathIndex >= path.length - 1`, i.e. *being on the last leg*, which is
+    // true for the entire final stretch of every path and for the whole of
+    // any short one -- so a held cursor just behind a wall re-ran A* on all
+    // sixty frames, which is precisely the hitch this branch exists to avoid.
+    const exhausted = !this.path;
     if (drifted || exhausted) {
       const p = nav?.path(this.position.x, this.position.z, worldX, worldZ);
       if (p) {

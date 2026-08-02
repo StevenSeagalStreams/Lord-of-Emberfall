@@ -325,12 +325,22 @@ class Game {
     if (input.wheel !== 0) this.rig.zoom(input.wheel);
     if (input.pressed('F3')) this.hud.toggleDebug();
 
+    // Hold-to-move (F1). Diablo players hold the left button down and steer
+    // with the cursor; they do not click once per step. This block already ran
+    // on every held frame, but it called orderMove/orderAttack, and both of
+    // those run a fresh A* -- sixty pathfinds a second at a cursor that has
+    // barely moved. orderHold() is the held-order path: it steers straight at
+    // the live cursor while the line is clear and only falls back to A* when
+    // something is actually in the way. Releasing the button leaves the last
+    // path in place, so a single click is still a discrete move order and
+    // needs no second code path.
     if (!input.pointerOverUI && input.mouseDown('left') && this.player.alive) {
       const hit = this._pickEntity();
-      if (hit && hit.faction === 'hostile' && hit.alive) {
-        this.player.orderAttack(hit, this.world.nav);
+      const hostile = (hit && hit.faction === 'hostile' && hit.alive) ? hit : null;
+      if (hostile) {
+        this.player.orderHold(this.player.position.x, this.player.position.z, this.world.nav, hostile);
       } else if (input.groundValid) {
-        this.player.orderMove(input.ground.x, input.ground.z, this.world.nav);
+        this.player.orderHold(input.ground.x, input.ground.z, this.world.nav, null);
       }
     }
 
