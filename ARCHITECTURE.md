@@ -57,7 +57,25 @@ Emit rather than reach across subsystems. Established events:
 | `item:dropped` | `{ item, position }` |
 | `item:pickup` | `{ item }` |
 | `player:levelup` | `{ level }` |
-| `fx:request` | `{ kind, position, direction?, scale? }` |
+| `fx:request` | `{ kind, position, direction?, scale?, target?, targetId? }` |
+
+`fx:request` payload notes:
+
+- `position` — where the effect originates, in world space.
+- `direction` — unit vector, or `null`. May be absent.
+- `target` — `{x,y,z}` **endpoint**, when the effect connects two points.
+  Required for anything beam-like or travelling: a lightning bolt must span
+  caster to victim exactly, and a projectile must know where it is going.
+  Without it an effect can only guess a length, which is why the lightning arc
+  used to stop short of whatever it was supposedly hitting.
+- `targetId` — optional entity id, so a travelling effect can re-home on a
+  moving victim rather than flying at a stale position.
+
+**Projectile stages.** A spell that visibly travels emits three requests, not
+two: `<kind>_cast` at the caster, `<kind>_travel` carrying both `position` and
+`target`, and `<kind>_impact` at the victim once it arrives. Emitting only cast
+and impact produces a puff at each end and nothing in between -- the player
+sees no projectile and cannot tell what hit them or from where.
 
 ## Rendering rules
 

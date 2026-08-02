@@ -43,3 +43,41 @@ commit that fixed three other bugs in that call site.
 Equipment now **adds** to a base swing instead of replacing it, so a subsystem
 that does not exist yet contributes nothing rather than zeroing everything out.
 Verified: stub `{0,0}` now yields base `[14,24]`; gear `+6/+10` yields `[20,34]`.
+
+
+---
+
+## Round 2 — Borka, 2026-08-02
+
+> The visuals are not up to standard they need to be utterly perfect especially
+> Characters like the hero (player model) and the enemies they need to be made
+> bigger, scaled up 2 times, and more detailed. the characters cloak looks very
+> spread out like a flat board on hes back, it needs to be more loose and float
+> down his body. the spells need to be more visual so you know where they hit,
+> lightning needs to be a line to the target and fire flies trough the air
+> making a trail behind it and so on.
+
+### Named fix tasks
+
+| # | Task | Owner | Status |
+| --- | --- | --- | --- |
+| G1 | **Characters 2x scale + far more detail** — hero and every enemy. | characters | open |
+| G2 | **Cloak reads as a flat board.** Must hang loose and drape down the body, not stand out rigid behind it. | characters | open |
+| G3 | **Fire must fly with a trail.** | vfx + combat | open |
+| G4 | **Lightning must be a line that reaches the target.** | vfx + combat | open |
+
+### Root causes found before dispatch
+
+**G3 — there is no projectile.** `firebolt` emits only `castFx` at the caster
+and `impactFx` at the victim. `fireball_travel` is implemented in the FX layer
+but **nothing ever emits it**, so nothing crosses the gap. The player sees a
+puff at each end and no flight.
+
+**G4 — the bolt never reaches anything.** `lightningArc` draws along
+`length = 3 + scale * 5`, a hardcoded distance down a direction vector. It has
+no idea where the target is, so it stops wherever that constant runs out.
+
+Both are contract gaps as much as art gaps: `fx:request` carried `position` and
+`direction` but no **endpoint**. The contract now carries `target` (and
+optional `targetId` so a projectile can re-home on a moving victim), and
+documents that a travelling spell emits three stages, not two.
