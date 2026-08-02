@@ -364,11 +364,24 @@ class Game {
    * the core loop, and it is only real if it is read here.
    */
   _playerWeaponDamage() {
-    const stats = this.items?.stats;
-    const min = Number.isFinite(stats?.damageMin) ? stats.damageMin : 14;
-    const max = Number.isFinite(stats?.damageMax) ? stats.damageMax : 24;
-    const lo = Math.min(min, max);
-    const hi = Math.max(min, max);
+    // Equipment ADDS to the character's base swing; it never replaces it.
+    //
+    // The previous version read damageMin/damageMax straight off items.stats
+    // and fell back only when they were non-finite. The items pillar is still
+    // a stub and reports a placeholder 0/0 -- which is perfectly finite -- so
+    // every swing resolved to exactly zero damage and the game became
+    // unwinnable. A subsystem that is not built yet must contribute nothing,
+    // not zero everything out.
+    const p = this.player;
+    const baseLo = Number.isFinite(p?.baseDamageMin) ? p.baseDamageMin : 14;
+    const baseHi = Number.isFinite(p?.baseDamageMax) ? p.baseDamageMax : 24;
+
+    const s = this.items?.stats;
+    const bonusLo = Number.isFinite(s?.damageMin) ? s.damageMin : 0;
+    const bonusHi = Number.isFinite(s?.damageMax) ? s.damageMax : 0;
+
+    const lo = Math.max(1, Math.min(baseLo + bonusLo, baseHi + bonusHi));
+    const hi = Math.max(lo, Math.max(baseLo + bonusLo, baseHi + bonusHi));
     return lo + this.rng.next() * (hi - lo);
   }
 
