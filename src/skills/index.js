@@ -26,11 +26,30 @@ export function createSkills(ctx) {
     return world.player;
   }
 
-  /** Same animation-lock contract as melee: cannot cast through a swing, a
-   *  cast, a stun, death, a cooldown, or insufficient mana. Unlike melee
-   *  attacks, skills are NOT buffered/cancellable -- "animation lock ...
-   *  actually blocks" is the explicit Gate 1 verification requirement, and a
-   *  cast is a deliberate commitment, not a filler swing. */
+  /** Same animation-lock contract as melee: cannot cast through a cast, a
+   *  stun, death, a cooldown, or insufficient mana. Unlike melee attacks,
+   *  skills are NOT buffered/cancellable once THEY are the thing in flight --
+   *  "animation lock ... actually blocks" is the explicit Gate 1
+   *  verification requirement, and a cast is a deliberate commitment, not a
+   *  filler swing.
+   *
+   *  A melee swing's own CANCELLABLE back half is the one exception, and it
+   *  is load-bearing, not a nicety: main.js's auto-swing re-issues attack()
+   *  every frame a live target sits in melee range, which used to mean the
+   *  animator was locked into an unbroken attackSwing chain for the entire
+   *  fight -- a skill hotkey press was silently swallowed by `p.animator
+   *  ?.busy` every single frame, with no mana spent, no cooldown started,
+   *  nothing. That is the actual root cause behind "the spells and attacks
+   *  are not hitting the mobs": the RESOLVE functions below were never even
+   *  reached, because canCast() never once returned true while the player
+   *  had a target in range -- see the report and Player.canAttack()'s own
+   *  doc comment (Player.js is the other half of this fix: it makes the
+   *  auto-swing yield the window on the frame a skill key is pressed, so
+   *  that window is actually open here when polled). Treating "busy but the
+   *  swing is in its cancellable back half" as castable, exactly the same
+   *  rule AttackState already applies to melee cancelling into melee, is
+   *  what lets a skill actually interrupt an attack instead of queueing
+   *  behind an auto-swing chain that never ends. */
   function canCast(id) {
     const def = SKILLS[id];
     const p = player();
@@ -38,7 +57,8 @@ export function createSkills(ctx) {
     if (p.stunTimer > 0) return false;
     if (cooldowns[id] > 0) return false;
     if (p.mana < def.manaCost) return false;
-    if (p.animator?.busy) return false;
+    const swingGate = p._attackState ? p._attackState.canAct(p) : !p.animator?.busy;
+    if (!swingGate) return false;
     return true;
   }
 

@@ -20,6 +20,7 @@ import { resolveOverlaps } from './entities/Entity.js';
 import { HUD } from './ui/HUD.js';
 import { DebugConsole } from './core/Console.js';
 import { Telemetry } from './core/Telemetry.js';
+import { DeathSystem } from './core/DeathSystem.js';
 
 import { createFX } from './fx/index.js';
 import { createAudio } from './audio/index.js';
@@ -138,6 +139,11 @@ class Game {
     // subscribed to the bus in time to catch their first events.
     this.telemetry = new Telemetry(this);
     this.console = new DebugConsole(this);
+
+    // Death, the corpse run and the ghost walk. Installed after the zone so it
+    // can derive checkpoints from the level's own rooms.
+    this.death = new DeathSystem(this);
+    this.death.installCheckpoints(this.zone);
 
     this.fx = createFX(this._ctx());
     this.audio = createAudio(this._ctx());
@@ -281,7 +287,11 @@ class Game {
     this.world.time += dt;
 
     if (!this.paused) {
-      this._updateInput(dt);
+      this.death.update(dt);
+      // While dead or ghosting the death system owns the player entirely --
+      // it moves the body itself, because a dead Entity refuses to move by
+      // design and that rule belongs to the combat pillar.
+      if (this.death.state === 'alive') this._updateInput(dt);
       this._updateEntities(dt);
     }
 
@@ -402,7 +412,11 @@ class Game {
   }
 
   _updateEntities(dt) {
-    for (const e of this.entities) e.update(dt, this.world);
+    const ghosting = this.death?.state !== 'alive';
+    for (const e of this.entities) {
+      if (ghosting && e === this.player) continue;   // the death system drives it
+      e.update(dt, this.world);
+    }
     resolveOverlaps(this.entities, 2);
 
     // Corpses persist. This is a Diablo rule, not an oversight: a field of

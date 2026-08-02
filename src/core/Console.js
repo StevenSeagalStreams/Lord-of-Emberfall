@@ -155,6 +155,32 @@ export class DebugConsole {
         },
       },
 
+      die: {
+        usage: 'die',
+        desc: 'kill yourself, to test the corpse run',
+        run: () => {
+          const p = g().player;
+          p.godMode = false;
+          p.health = 0;
+          p.kill(null);
+          this.print('you have died', 'warn');
+        },
+      },
+
+      checkpoints: {
+        usage: 'checkpoints',
+        desc: 'list checkpoints and which one is active',
+        run: () => {
+          const d = g().death;
+          if (!d) return this.print('death system not present', 'err');
+          d.checkpoints.forEach((c, i) => {
+            const active = c === d.activeCheckpoint ? '  <- active' : '';
+            this.print(`  ${i}: ${c.x.toFixed(0)}, ${c.z.toFixed(0)}${active}`, 'info');
+          });
+          this.print(`state: ${d.state}   deaths: ${d.deaths}`, 'info');
+        },
+      },
+
       seed: {
         usage: 'seed [n]',
         desc: 'show the current seed, or reload with a new one',

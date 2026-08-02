@@ -24,11 +24,17 @@ export class VerletCloth {
    * @param {number} spec.length rest length (hang distance)
    * @param {number} spec.curve  lateral bow, 0 = flat panel
    * @param {number} spec.forwardBias initial Z of the free end (front/back)
+   * @param {number} [spec.hemWidth] width at the free (bottom) edge, if
+   *   different from `width` at the pinned edge -- a real cloak/cape flares
+   *   toward the hem rather than hanging as a rectangle, and that flare is
+   *   most of what reads as "cloth mass" rather than "cardboard cutout"
+   *   from the top-down-ish gameplay camera.
    */
   constructor(spec = {}) {
     const cols = this.cols = Math.max(2, spec.cols ?? 5);
     const rows = this.rows = Math.max(2, spec.rows ?? 6);
     const width = spec.width ?? 0.5;
+    const hemWidth = spec.hemWidth ?? width;
     const length = spec.length ?? 0.6;
     const curve = spec.curve ?? 0;
     const fwd = spec.forwardBias ?? 0;
@@ -37,11 +43,13 @@ export class VerletCloth {
 
     this.points = [];
     for (let r = 0; r < rows; r++) {
+      const rt = rows > 1 ? r / (rows - 1) : 0;
+      const rowWidth = width + (hemWidth - width) * rt;
       for (let c = 0; c < cols; c++) {
         const u = cols > 1 ? c / (cols - 1) : 0.5;
-        const x = (u - 0.5) * width;
+        const x = (u - 0.5) * rowWidth;
         const y = -r * (length / (rows - 1));
-        const z = Math.sin(u * Math.PI) * curve + (r / (rows - 1)) * fwd;
+        const z = Math.sin(u * Math.PI) * curve + rt * fwd;
         const p = new THREE.Vector3(x, y, z);
         this.points.push({ pos: p.clone(), prev: p.clone(), pinned: r === 0 });
       }

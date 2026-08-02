@@ -425,7 +425,11 @@ export class Entity {
     // --- collision-aware move ----------------------------------------------
     const nx = this.position.x + (this.velocity.x + kx) * sdt;
     const nz = this.position.z + (this.velocity.z + kz) * sdt;
-    const colliders = world?.colliders;
+    // `noclip` is set by the debug console (src/core/Console.js) straight
+    // onto `player.noclip`, but nothing honoured it -- it was stored and
+    // never read. Any entity can carry the flag (only the player ever will
+    // in practice), so this lives here rather than duplicated per-caller.
+    const colliders = this.noclip ? null : world?.colliders;
 
     if (colliders) {
       // Axis-separated resolution lets the body slide along walls instead of

@@ -683,6 +683,222 @@ console.log('\n[10] Player integration -- real class, not a mock (buffering, D1 
 }
 
 // ---------------------------------------------------------------------------
+console.log('\n[11] Spell resolution -- a cast actually lands damage on a monster in range, and misses one beyond it');
+// ---------------------------------------------------------------------------
+{
+  // F3 verification, per the mission brief: "a test that only asserts 'the
+  // skill fired' is worthless here -- assert the monster's health actually
+  // dropped." Drives the REAL Player/Monster/createSkills wiring, not a
+  // reimplementation of RESOLVE.firebolt/arcstorm.
+  const DT = 1 / 60;
+
+  function driveCastToImpact(p, skills, world, id, frames = 40) {
+    for (let i = 0; i < frames; i++) {
+      skills.update(DT);
+      p.update(DT, { colliders: null });
+      for (const m of world.monsters) m.update(DT, { colliders: null, monsters: world.monsters, player: p });
+      resolveOverlaps([p, ...world.monsters], 1);
+    }
+  }
+
+  // (a) Firebolt (range=12): a monster sitting well inside range takes damage.
+  {
+    HitStop.reset();
+    const p = new Player();
+    p.position.set(0, 0, 0);
+    const near = new Monster({ kind: 'skeleton' });
+    near.position.set(5, 0, 0); // inside firebolt's range=12
+    const world = { player: p, monsters: [near], bus: { emit() {} } };
+    const input = { _p: new Set(['Digit2']), pressed(c) { return this._p.has(c); } };
+    const skills = createSkills({ bus: world.bus, input, world, rng: { range: (a, b) => (a + b) / 2 } });
+
+    const healthBefore = near.health;
+    skills.update(DT); // consumes the queued press, starts the cast
+    input._p.clear();
+    driveCastToImpact(p, skills, world, 'firebolt');
+    check('a Firebolt cast at distance 5 (inside its range=12) actually reduces the target\'s health',
+      near.health < healthBefore);
+    HitStop.reset();
+  }
+
+  // (b) Firebolt: a monster sitting beyond range is untouched.
+  {
+    HitStop.reset();
+    const p = new Player();
+    p.position.set(0, 0, 0);
+    const far = new Monster({ kind: 'skeleton' });
+    far.position.set(20, 0, 0); // outside firebolt's range=12
+    const world = { player: p, monsters: [far], bus: { emit() {} } };
+    const input = { _p: new Set(['Digit2']), pressed(c) { return this._p.has(c); } };
+    const skills = createSkills({ bus: world.bus, input, world, rng: { range: (a, b) => (a + b) / 2 } });
+
+    const healthBefore = far.health;
+    // canCast() itself must still be true (mana/cooldown/lock are all fine --
+    // only the target is out of reach), so this proves the MISS is a real
+    // "nothing in range" outcome and not just a gate refusing to fire at all.
+    check('canCast(firebolt) is still true with no target in range (it just finds nothing to hit)',
+      skills.canCast('firebolt'));
+    skills.update(DT);
+    input._p.clear();
+    driveCastToImpact(p, skills, world, 'firebolt');
+    check('a Firebolt cast at distance 20 (beyond its range=12) leaves the target\'s health untouched',
+      far.health === healthBefore);
+    HitStop.reset();
+  }
+
+  // (c) Arc Storm (radius=4.2, centred on the PLAYER, not the cursor -- see
+  // SkillDefs.js): a monster inside the radius takes damage, one just
+  // beyond it does not, in the SAME cast.
+  {
+    HitStop.reset();
+    const p = new Player();
+    p.position.set(0, 0, 0);
+    const inside = new Monster({ kind: 'skeleton' });
+    inside.position.set(3, 0, 0); // inside radius=4.2
+    const outside = new Monster({ kind: 'skeleton' });
+    outside.position.set(6, 0, 0); // outside radius=4.2
+    const world = { player: p, monsters: [inside, outside], bus: { emit() {} } };
+    const input = { _p: new Set(['Digit4']), pressed(c) { return this._p.has(c); } };
+    const skills = createSkills({ bus: world.bus, input, world, rng: { range: (a, b) => (a + b) / 2 } });
+
+    const insideBefore = inside.health, outsideBefore = outside.health;
+    skills.update(DT);
+    input._p.clear();
+    driveCastToImpact(p, skills, world, 'arcstorm');
+    check('Arc Storm damages a monster inside its radius', inside.health < insideBefore);
+    check('Arc Storm leaves a monster just beyond its radius untouched', outside.health === outsideBefore);
+    HitStop.reset();
+  }
+}
+
+// ---------------------------------------------------------------------------
+console.log('\n[12] F3 root cause -- melee auto-swing must not starve skill casts forever while a live target is in range');
+// ---------------------------------------------------------------------------
+{
+  // This is the actual bug behind "the spells and attacks are not hitting
+  // the mobs": main.js's auto-swing re-issues attack() every single frame a
+  // live target sits in melee range (see main.js's _updateInput), which used
+  // to keep the animator perpetually locked in an unbroken attackSwing
+  // chain. canCast()'s `p.animator?.busy` check then NEVER saw a free
+  // animator while the player was actively fighting -- which is precisely
+  // when a player wants Frost Nova or Arc Storm most. A live headless-browser
+  // probe against the real running game (not just this unit) confirmed the
+  // pre-fix behaviour: 180 consecutive frames of melee against a live target,
+  // holding a skill key the whole time, produced ZERO casts. Reproduce the
+  // same shape here with the real Player/Monster/skills wiring, and prove it
+  // now succeeds.
+  const DT = 1 / 60;
+  HitStop.reset();
+
+  const p = new Player();
+  p.position.set(0, 0, 0);
+  // maxHealth pumped up so melee cannot kill it mid-test and confound "did
+  // the cast fire" with "the fight simply ended".
+  const foe = new Monster({ kind: 'skeleton' });
+  foe.position.set(1.2, 0, 0); // inside melee attackRange
+  foe.maxHealth = 1e9; foe.health = 1e9;
+  const world = { player: p, monsters: [foe], bus: { emit() {} } };
+  p.orderAttack(foe, { path: () => null }); // engage in melee, same as a click
+
+  // Duck-typed Input matching src/core/Input.js's public surface -- a skill
+  // hotkey is held "pressed" (edge-triggered, exactly like a real keypress
+  // that Input.js would report true for one frame) on every single frame,
+  // mirroring an impatient player mashing the key throughout the fight.
+  const input = { _p: new Set(), pressed(c) { return this._p.has(c); } };
+  const skills = createSkills({ bus: world.bus, input, world, rng: { range: (a, b) => (a + b) / 2 } });
+
+  let castFrame = -1;
+  for (let f = 0; f < 120 && castFrame < 0; f++) {
+    input._p = new Set(['Digit3']); // Frost Nova -- the panic-button skill
+    // Mirrors main.js's exact per-frame order: input's auto-swing check
+    // FIRST (using the corrected call site, canAttack(input) -- see the
+    // report for the one-line main.js snippet this depends on), then
+    // entities update, then the skills subsystem polls input.
+    const manaBefore = p.mana;
+    if (foe.alive && p.distanceTo(foe) <= p.attackRange && p.canAttack(input)) {
+      p.attack((ev) => {
+        if (ev !== 'impact') return;
+        if (!foe.alive || p.distanceTo(foe) > p.attackRange * 1.35) return;
+        foe.damage(1, p, {});
+      });
+    }
+    p.update(DT, { colliders: null });
+    foe.update(DT, { colliders: null, monsters: [foe], player: p });
+    resolveOverlaps([p, foe], 1);
+    skills.update(DT);
+    if (p.mana < manaBefore) castFrame = f;
+  }
+
+  check('a skill cast succeeds within a couple of frames even with a live melee target continuously in range (root-cause fix)',
+    castFrame >= 0 && castFrame < 5);
+  check('Frost Nova\'s own effect landed once it fired (target got stunned/slowed)',
+    castFrame >= 0 && (foe.stunTimer > 0 || foe.slowTimer > 0));
+  HitStop.reset();
+
+  // Companion guard: the OLD unpatched call site (no input passed to
+  // canAttack(), i.e. what main.js does today until the snippet in the
+  // report lands) must still show the starvation this fix depends on being
+  // wired up in main.js -- if this assertion ever starts failing, the
+  // Player.js half of the fix has regressed independently of whether the
+  // main.js snippet is applied.
+  {
+    const p2 = new Player();
+    p2.position.set(0, 0, 0);
+    const foe2 = new Monster({ kind: 'skeleton' });
+    foe2.position.set(1.2, 0, 0);
+    foe2.maxHealth = 1e9; foe2.health = 1e9;
+    const world2 = { player: p2, monsters: [foe2], bus: { emit() {} } };
+    p2.orderAttack(foe2, { path: () => null });
+    const input2 = { _p: new Set(), pressed(c) { return this._p.has(c); } };
+    const skills2 = createSkills({ bus: world2.bus, input: input2, world: world2, rng: { range: (a, b) => (a + b) / 2 } });
+    let everCast = false;
+    for (let f = 0; f < 120; f++) {
+      input2._p = new Set(['Digit3']);
+      const manaBefore = p2.mana;
+      if (foe2.alive && p2.distanceTo(foe2) <= p2.attackRange && p2.canAttack(/* no input -- the unpatched call */)) {
+        p2.attack((ev) => { if (ev === 'impact' && foe2.alive) foe2.damage(1, p2, {}); });
+      }
+      p2.update(DT, { colliders: null });
+      foe2.update(DT, { colliders: null, monsters: [foe2], player: p2 });
+      resolveOverlaps([p2, foe2], 1);
+      skills2.update(DT);
+      if (p2.mana < manaBefore) { everCast = true; break; }
+    }
+    check('documents the pre-fix symptom: without passing input to canAttack() (today\'s main.js), the starvation still reproduces -- the main.js snippet in the report is load-bearing, not optional',
+      everCast === false);
+    HitStop.reset();
+  }
+}
+
+// ---------------------------------------------------------------------------
+console.log('\n[13] noclip -- the debug console\'s player.noclip flag is now honoured by the collision path');
+// ---------------------------------------------------------------------------
+{
+  // Console.js (not owned by combat) just flips `player.noclip = !player.noclip`
+  // and trusts the movement code to respect it -- it didn't, until now.
+  const solidEverywhere = { isBlocked: () => true };
+
+  const clipped = new Entity({ moveSpeed: 4, acceleration: 1000, friction: 1000, maxHealth: 100 });
+  clipped.setPath([{ x: 10, z: 0 }]);
+  for (let i = 0; i < 30; i++) clipped.update(1 / 60, { colliders: solidEverywhere });
+  check('without noclip, a wall-blocked entity does not pass through it', clipped.position.x === 0);
+
+  const ghosting = new Entity({ moveSpeed: 4, acceleration: 1000, friction: 1000, maxHealth: 100 });
+  ghosting.noclip = true;
+  ghosting.setPath([{ x: 10, z: 0 }]);
+  for (let i = 0; i < 30; i++) ghosting.update(1 / 60, { colliders: solidEverywhere });
+  check('with noclip=true, the SAME wall-blocked entity now passes straight through', ghosting.position.x > 1);
+
+  // Toggling back off re-engages collision immediately, no stale state.
+  ghosting.noclip = false;
+  const xBeforeReclip = ghosting.position.x;
+  ghosting.setPath([{ x: xBeforeReclip + 10, z: 0 }]);
+  for (let i = 0; i < 30; i++) ghosting.update(1 / 60, { colliders: solidEverywhere });
+  check('toggling noclip back off re-engages collision on the very next update',
+    Math.abs(ghosting.position.x - xBeforeReclip) < 1e-6);
+}
+
+// ---------------------------------------------------------------------------
 console.log(`\n${pass} passed, ${fail} failed`);
 if (fail > 0) {
   console.log('Failures:', failures.join(', '));

@@ -2,6 +2,8 @@ import * as THREE from 'three';
 import { Entity } from './Entity.js';
 import { buildWarrior, buildSword } from './Models.js';
 import { AttackState } from '../combat/AttackState.js';
+import { SKILLS } from '../skills/SkillDefs.js';
+import { TILE } from '../world/LevelBuilder.js';
 
 /** Seconds since the last combat action before life regen resumes -- the D1
  *  rule ("life does not regenerate in combat") needs a definition of
@@ -108,15 +110,123 @@ export class Player extends Entity {
   }
 
   /**
+   * Continuous hold-to-move/hold-to-attack order -- the F1 gate fix. Diablo
+   * players hold the left button down; main.js's input block calls this
+   * every frame the button is down (see the report for the exact one-line
+   * snippet, main.js is not mine to edit), instead of only issuing an order
+   * on the down-edge. A single click is just a hold that happens to last one
+   * frame, so this one method covers both -- "a single click still works as
+   * a discrete order" falls out for free rather than needing a second code
+   * path.
+   *
+   * @param {number} worldX/worldZ  live cursor ground position, re-supplied
+   *   every frame as the cursor moves.
+   * @param {*} nav  world.nav (NavGrid) -- used both for A* and lineOfSight.
+   * @param {Entity|null} [hoveredHostile]  the live entity under the cursor
+   *   this frame, if any and hostile -- holding over it attacks it
+   *   continuously instead of walking into it.
+   *
+   * Responsiveness: for a target in open line of sight this steers straight
+   * at the live cursor position every frame (setPath() on a single waypoint
+   * is just writing an array -- no A* call, so no per-frame repath hitch).
+   * A* only runs when the direct line is blocked, and even then only when
+   * the held point has actually moved enough to matter or the current path
+   * has run out -- not on every single blocked frame.
+   */
+  orderHold(worldX, worldZ, nav, hoveredHostile = null) {
+    if (hoveredHostile && hoveredHostile.alive) {
+      // Re-affirm only on a NEW target -- once engaged, Entity/Player's own
+      // update() already re-paths toward a moving live target every frame
+      // (see update() below) and main.js's auto-swing handles the actual
+      // hits, so calling orderAttack() again here every single held frame
+      // would just be redundant re-pathing work for the same outcome.
+      if (this.target !== hoveredHostile) this.orderAttack(hoveredHostile, nav);
+      this._heldGroundTarget = null;
+      return;
+    }
+
+    this.target = null;
+    this.moveOrder = { x: worldX, z: worldZ };
+
+    const dx = worldX - this.position.x, dz = worldZ - this.position.z;
+    if (Math.hypot(dx, dz) < this.arriveRadius) {
+      // Already basically there -- let friction settle instead of chasing a
+      // fractional-unit target forever, which would read as a jitter/vibrate
+      // right under the cursor.
+      this.clearPath();
+      this._heldGroundTarget = null;
+      return;
+    }
+
+    if (this._hasLineOfSight(worldX, worldZ, nav)) {
+      this._heldGroundTarget = null;
+      this.setPath([{ x: worldX, z: worldZ }]);
+      return;
+    }
+
+    // Blocked: only re-run A* when the held point has drifted enough to
+    // matter, or the existing path has run out -- a cursor held roughly
+    // still (or jittering by a pixel) over the same rough spot must not
+    // re-path every frame, which is exactly the hitch the mission calls out.
+    const last = this._heldGroundTarget;
+    const drifted = !last || Math.hypot(last.x - worldX, last.z - worldZ) > 0.75;
+    const exhausted = !this.path || this.pathIndex >= this.path.length - 1;
+    if (drifted || exhausted) {
+      const p = nav?.path(this.position.x, this.position.z, worldX, worldZ);
+      if (p) {
+        this.setPath(p);
+        this._heldGroundTarget = { x: worldX, z: worldZ };
+      }
+    }
+  }
+
+  /**
+   * Straight-line-of-sight test between the player and a world point, using
+   * the same world<->grid conversion nav.path() applies internally --
+   * NavGrid.lineOfSight() takes grid cell coordinates, not world units.
+   */
+  _hasLineOfSight(worldX, worldZ, nav) {
+    if (!nav || typeof nav.lineOfSight !== 'function') return false;
+    return nav.lineOfSight(
+      Math.round(this.position.x / TILE), Math.round(this.position.z / TILE),
+      Math.round(worldX / TILE), Math.round(worldZ / TILE)
+    );
+  }
+
+  /**
    * Can a *new* swing start (or cancel into) right now? True either with no
    * swing in flight, or once the in-flight swing has passed its damage event
    * -- see AttackState. This is deliberately looser than "!animator.busy":
    * that would keep gating input on the full follow-through animation
    * finishing, which is exactly the dead-frame bug the back-half cancel
    * window exists to fix.
+   *
+   * @param {import('../core/Input.js').Input} [input] When given, a frame on
+   *   which the player has a skill hotkey freshly pressed refuses -- this is
+   *   the fix for the root cause of "spells don't hit anything": main.js's
+   *   auto-swing re-issues `attack()` every single frame a live target sits
+   *   in melee range, so it was re-locking the animator into an unbroken
+   *   attackSwing chain and stealing the cancellable window before the
+   *   skills subsystem (which polls input later in the same frame, see
+   *   skills/index.js) ever got a chance to claim it. canCast()/cast() were
+   *   made to accept the cancellable window (mirroring melee's own
+   *   cancel-into-itself rule) in the same fix, but that only matters if
+   *   auto-swing yields the window in the first place -- hence this check.
+   *   A direct attack() call from an explicit click order does not pass
+   *   `input` and is unaffected; only the passive auto-swing-while-in-range
+   *   path needs to yield.
    */
-  canAttack() {
+  canAttack(input) {
+    if (input && this._wantsSkillCast(input)) return false;
     return this._attackState.canAct(this);
+  }
+
+  /** True if any Gate-1 skill hotkey was freshly pressed this frame. */
+  _wantsSkillCast(input) {
+    for (const id in SKILLS) {
+      if (input.pressed(SKILLS[id].key)) return true;
+    }
+    return false;
   }
 
   /**
