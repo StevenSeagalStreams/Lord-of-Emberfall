@@ -26,7 +26,7 @@ Raw feedback as given:
 | F1 | **Hold-to-move.** Holding the mouse button moves the character continuously toward the cursor, Diablo-style. Click-to-move alone is wrong for the genre. | combat | **FIXED** — see below |
 | F2 | **Attacks do not hit.** Melee resolved to zero damage. | core | **FIXED** — see below |
 | F3 | **Spells do not hit.** Skill damage is not landing on monsters. | combat | **FIXED** — melee auto-swing was starving every cast |
-| F4 | **No monster health readout.** No way to tell how much life a monster has. | ui | built, awaiting visual confirmation |
+| F4 | **No monster health readout.** No way to tell how much life a monster has. | ui | **FIXED** — confirmed in `shots/f4/combat.png` |
 | F5 | **Character not recognisable.** Model needs to read as a class at gameplay zoom; cloak bigger. | characters | open — folded into G1/G2 |
 | F6 | **Everything slightly bigger.** Gear changes must be visible — you should see a new weapon or armour piece. | characters | open — folded into G1/G2 |
 | F7 | **No restart after death.** The game cannot be continued once you die. | core | **FIXED** — `src/core/DeathSystem.js` |
@@ -121,3 +121,27 @@ rather than on cast, **the spells are slightly slower to kill than they were**.
 That is the intended trade — a projectile you can see is a projectile that
 takes time to get there — but it is a feel change, and feel is yours to judge,
 not mine.
+
+---
+
+## Capture evidence — `shots/f4/combat.png` (2026-08-02)
+
+Five skeletons mid-fight, each carrying a floating nameplate with a red health
+track. **F4 is confirmed rendering**, not merely written.
+
+Three things the same frame exposes, recorded rather than quietly filed:
+
+1. **The frame is too dark: mean luma 0.0615 against the 0.10–0.22 interior
+   band.** The catacombs art pass is open and this is its job. Per the vision
+   rules that band is a floor, not a goal — being in band would earn nothing;
+   the actual complaint is that the stone reads as brown mush and only the
+   torch pools have material.
+2. **The skeletons are stick figures.** At gameplay zoom they are barely more
+   than a silhouette of poles. This is exactly G1 and it is in progress.
+3. **1,865 draws.** The known character-rig attribution problem (VISION.md,
+   Open findings) — roughly fifteen meshes per character, times every monster
+   on screen. The world is two draw calls; the characters are the rest.
+
+The hero himself is mid-rebuild in the working tree while G1/G2 lands, so this
+capture is **not** valid evidence about the player model or the cloak. That
+needs a fresh capture once the character work is committed.
