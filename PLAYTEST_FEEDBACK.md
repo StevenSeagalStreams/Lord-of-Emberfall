@@ -148,19 +148,29 @@ needs a fresh capture once the character work is committed.
 
 ## Capture evidence — G3 firebolt in flight (2026-08-02)
 
-Two frames 45 ms apart of a **real** Firebolt cast — the shipping
+Eight frames, 45 ms apart, of a **real** Firebolt cast — the shipping
 `skills.cast('firebolt')` path, not the `?fxdemo=1` rotation, because the demo
-rotation would prove nothing about what a player actually sees.
+rotation would prove nothing about what a player actually sees. One skeleton
+staged nine units out, every other monster moved off the field so the bolt
+could not pick a nearer victim than the one the shot was framed for.
 
-- Frame 0: a bright ember hangs in mid-air, clearly detached from the caster,
-  throwing its own warm light onto the cobbles. Mana has dropped 90 → 85, so
-  the cast happened.
-- Frame 1: the ember has moved right, and there are now **two** glowing points
-  — the core plus its cooling wake.
-- The target skeleton reads **46 / 46 in both frames.** That is the point:
-  damage now lands on arrival, so there is a real interval where the spell is
-  in the world and has not hit yet.
+The whole three-stage chain reads straight off the health bar and mana orb:
 
-G3 is confirmed rendering. G4's arcs are confirmed in code (endpoint-spanning)
-but not yet in a capture — lightning is instant, so catching one needs a
-tighter capture window than this harness currently takes.
+| frame | target HP | what is on screen |
+| --- | --- | --- |
+| 0 | 46 / 46 | a bright ember in mid-air, detached from the caster, throwing its own warm light onto the cobbles. Mana 90 → 85: the cast happened. |
+| 1 | 46 / 46 | the ember has moved right, and there are now **two** glowing points — the core plus its cooling wake. |
+| 3 | **39 / 46** | arrival: embers scatter across the target on the right and the damage lands. |
+| 7 | **37 / 46** | still dropping with no second cast — the burn DoT ticking. Mana regenerating, 86 → 88. |
+
+Frames 0 and 1 sitting at full health are the entire point of the change:
+there is now a real interval during which the spell exists in the world and
+has not hit yet. **G3 is confirmed end to end**, burn included.
+
+G4's arcs are confirmed in code (endpoint-spanning) but not in a capture —
+lightning is instant, so catching one needs a tighter window than this harness
+takes. Stated rather than glossed.
+
+Harness: `shots/spellshot.mjs` (gitignored — a throwaway adaptation of
+`src/fx/burst.mjs` that stages and fires a real cast instead of running the
+demo rotation).
