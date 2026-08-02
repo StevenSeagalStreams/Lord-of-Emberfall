@@ -334,9 +334,19 @@ class Game {
       }
     }
 
+    // Skills first: a deliberate cast outranks the filler swing. The skills
+    // subsystem reads its own hotkeys, so this is just giving it the frame.
+    this.skills?.update?.(dt);
+
     // Auto-swing when a target is in reach.
     const t = this.player.target;
-    if (t && t.alive && this.player.distanceTo(t) <= this.player.attackRange && this.player.canAttack()) {
+    // Pass input so the auto-swing yields when the player is asking for a
+    // skill this frame. Without it, melee re-issues attack() every frame a
+    // live target is in range, the animator never leaves the swing chain, and
+    // a cast can literally never get through -- which is exactly why spells
+    // "did not hit the monsters": they were never firing at all.
+    if (t && t.alive && this.player.distanceTo(t) <= this.player.attackRange
+        && this.player.canAttack(this.input)) {
       this.player.attack((ev) => {
         if (ev !== 'impact') return;
         if (!t.alive || this.player.distanceTo(t) > this.player.attackRange * 1.35) return;
