@@ -196,6 +196,35 @@ export function createFX(ctx) {
     }
   }
 
+  // A projectile mid-flight is invisible in a single screenshot (G3's own
+  // verification problem), so the diagnostic rotation needs a bolt that is
+  // ALWAYS somewhere between its endpoints, not a one-shot burst on a 0.45s
+  // timer like the rest of this hook -- otherwise a 3-frame burst capture
+  // (src/fx/burst.mjs) could land entirely inside the gap between bursts and
+  // show nothing moving. It ping-pongs A<->B forever so any capture window
+  // catches genuine cross-gap motion with a trail behind it, at the real
+  // `fireball_travel` kind skills/index.js itself emits -- this is the same
+  // fx:request the real cast makes, just driven by a scripted position
+  // instead of a live projectile.
+  const DEMO_BOLT_LEG = 1.4; // seconds per leg -- slow enough that a 120ms-
+                              // spaced 3-frame burst shows a clear, readable
+                              // step each frame (a real cast's 0.15-0.3s
+                              // flight is intentionally snappier than this).
+  function updateDemoBolt(p) {
+    const leg = (t / DEMO_BOLT_LEG) % 2;
+    const forward = leg < 1; // A->B, then B->A
+    const u = forward ? leg : 2 - leg;
+    const A = { x: p.x - 3.2, y: p.y + 1.1, z: p.z + 1.8 };
+    const B = { x: p.x + 3.2, y: p.y + 1.1, z: p.z - 1.8 };
+    const from = forward ? A : B, to = forward ? B : A;
+    const pos = {
+      x: from.x + (to.x - from.x) * u,
+      y: from.y + (to.y - from.y) * u,
+      z: from.z + (to.z - from.z) * u,
+    };
+    bus.emit('fx:request', { kind: 'fireball_travel', position: pos, target: to, scale: 1 });
+  }
+
   function runDemo(dt) {
     const p = world?.player?.position;
     if (!p) return;
@@ -207,19 +236,26 @@ export function createFX(ctx) {
         bus.emit('item:dropped', { item: { rarity }, position: pos });
       });
     }
+
+    updateDemoBolt(p);
+
     demoTimer -= dt;
     if (demoTimer > 0) return;
     demoTimer = 0.45;
     const forward = { x: Math.sin(t * 0.7), z: Math.cos(t * 0.7) };
-    const cycle = Math.floor(t / 0.45) % 6;
+    const cycle = Math.floor(t / 0.45) % 7;
     const base = { x: p.x - 2.5, y: p.y + 0.9, z: p.z + 1.5 };
+    const lightningFrom = { x: p.x - 1, y: p.y + 1.2, z: p.z - 2 };
+    const lightningTo = { x: lightningFrom.x + forward.x * 6, y: p.y + 0.8, z: lightningFrom.z + forward.z * 6 };
     switch (cycle) {
       case 0: bus.emit('fx:request', { kind: 'blood_hit', position: base, direction: forward, scale: 1 }); break;
       case 1: bus.emit('fx:request', { kind: 'spark_metal', position: base, direction: forward, scale: 1.1 }); break;
       case 2: bus.emit('fx:request', { kind: 'impact_flash', position: base, direction: forward, scale: 1.2 }); break;
       case 3: bus.emit('fx:request', { kind: 'blood_kill', position: base, direction: forward, scale: 1.3 }); break;
       case 4: bus.emit('fx:request', { kind: 'fireball_impact', position: { x: p.x + 2, y: p.y + 0.5, z: p.z - 2 }, direction: forward, scale: 1.2 }); break;
-      case 5: bus.emit('fx:request', { kind: 'lightning_arc', position: { x: p.x - 1, y: p.y + 1.2, z: p.z - 2 }, direction: forward, scale: 1.4 }); break;
+      // Target set explicitly (G4): the arc must terminate on a real endpoint, not a guessed length.
+      case 5: bus.emit('fx:request', { kind: 'lightning_arc', position: lightningFrom, target: lightningTo, scale: 1.4 }); break;
+      case 6: bus.emit('fx:request', { kind: 'frost_ring', position: { x: p.x - 2, y: p.y + 0.1, z: p.z - 3 }, scale: 4.2 }); break;
       default: break;
     }
   }

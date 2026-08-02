@@ -5,21 +5,36 @@ import { sampleEmissionShape } from './GPUParticles.js';
 /**
  * Skill cast/travel/impact chains, driven entirely by `fx:request` kinds.
  *
- * `src/skills/*` is still a stub, so nothing calls these yet -- but the
- * contract has to exist before that pillar can be built without importing
- * this one. Each element (fire, frost, lightning) gets three beats: `_cast`
- * at the caster, `_travel` fired repeatedly as the projectile advances (a
- * skill loop calling this once every frame or two along the path), and
- * `_impact` at the hit point, which also leaves an aftermath decal so a
- * fight's scorch/frost marks accumulate on the floor the way blood does.
+ * `src/skills/index.js` is the caller now (G3/G4 fix pass): each element
+ * (fire, frost, lightning) gets three beats -- `_cast` at the caster,
+ * `_travel`/`_arc` carrying both `position` (the effect's current point) and
+ * `target` (its destination), and `_impact` at the hit point, which also
+ * leaves an aftermath decal so a fight's scorch/frost marks accumulate on the
+ * floor the way blood does.
+ *
+ * Firebolt is a real projectile: `skills/index.js` calls `fireball_travel`
+ * once per frame while the bolt is in flight, at the bolt's current
+ * interpolated position. Because the trail is just "whatever the last few
+ * frames' worth of travel particles haven't finished decaying yet", calling
+ * this every frame along the path IS the trail -- no separate trail system
+ * needed.
+ *
+ * Lightning has no travel stage (it is instant) but must still terminate ON
+ * the victim: `lightningArc` draws from `position` to `target` exactly,
+ * rather than guessing a length down `direction`.
+ *
+ * Frost Nova has no travel or target -- it is a self-centred AoE -- so
+ * instead it gets `frost_ring`, an expanding ring at the caster so the
+ * player can read the radius and see who it caught.
  *
  * Kinds handled: fireball_cast, fireball_travel, fireball_impact,
- * frost_cast, frost_travel, frost_impact, lightning_cast, lightning_arc,
- * lightning_impact.
+ * frost_cast, frost_ring, frost_travel, frost_impact, lightning_cast,
+ * lightning_arc, lightning_impact.
  */
 
 const _pos = new THREE.Vector3();
 const _dir = new THREE.Vector3();
+const _end = new THREE.Vector3();
 const _outPos = new THREE.Vector3();
 const _outDir = new THREE.Vector3();
 const _vel = new THREE.Vector3();
@@ -58,10 +73,39 @@ export function fireballCast(pools, payload, t) {
   pools.flash.trigger(payload.position, { color: 0xff7a2c, intensity: 26 * scale, distance: 4, life: 0.14 });
 }
 
+/** Called once per frame while a firebolt is in flight, at its current
+ *  interpolated position -- the bolt itself, PLUS a cooling trail behind it.
+ *  Two distinct layers, by design:
+ *   - `glow` core: warm, tint components run well above 1.0 so bloom catches
+ *     it (the bolt must read as a hot, glowing thing crossing the room).
+ *   - `dust` wake: deliberately BELOW 1.0 radiance (ordinary NormalBlending,
+ *     no bloom) -- ash/smoke cooling off behind the core, exactly the
+ *     "ember/smoke falloff, cooling as it decays" the fix calls for. Using a
+ *     separate non-bloom pool for this is what keeps the trail from just
+ *     being a second, redundant glow smear.
+ */
 export function fireballTravel(pools, payload, t) {
   toVec3(payload.position, _pos);
   const scale = payload.scale ?? 1;
   burst(pools.glow, t, _pos, FIRE_TINT, 2 + Math.round(scale * 2), { min: 0.1, max: 0.6 }, { min: 0.1, max: 0.18 }, 0.16 * scale);
+
+  const n = 1 + Math.round(scale);
+  for (let i = 0; i < n; i++) {
+    sampleEmissionShape('sphere', { radius: 0.7 }, rng, _outPos, _outDir);
+    _off.copy(_pos).addScaledVector(_outPos, 0.1);
+    _vel.copy(_outDir).multiplyScalar(0.15 + rng.next() * 0.35);
+    pools.dust.spawn(t, {
+      position: _off,
+      velocity: _vel,
+      life: 0.2 + rng.next() * 0.2,
+      sizeStart: 0.07 * scale,
+      sizeEnd: 0.24 * scale,
+      gravity: -0.35,
+      drag: 1.1,
+      tint: { r: 0.5, g: 0.26, b: 0.15 },
+      seed: rng.next(),
+    });
+  }
 }
 
 export function fireballImpact(pools, payload, t) {
@@ -121,17 +165,63 @@ export function lightningCast(pools, payload, t) {
   pools.flash.trigger(payload.position, { color: 0x9fd8ff, intensity: 22 * scale, distance: 3.5, life: 0.08 });
 }
 
-/** A jagged line of sparks from `position` along `direction`, length scaled by `scale`. */
+/**
+ * A jagged, forked bolt that spans `position` to `target` EXACTLY (G4): the
+ * bolt must read as a line connecting two specific things, the caster and
+ * the victim, not a line of arbitrary length pointed vaguely their way.
+ *
+ * `target` is required to hit the actual endpoint; `direction`+a guessed
+ * length is kept only as a fallback for a caller that has no endpoint to
+ * give (e.g. the `?fxdemo=1` diagnostic rotation), so this never regresses
+ * to "throws an error" for an old-shape payload.
+ *
+ * Two passes down the same path, plus forks branching off it:
+ *  - a wide, dim `glow` halo (soft skirt, lower tint) laid first so the...
+ *  - ...tight, bright `spark` core (hot tint, higher radiance) draws over it
+ *    and reads as the line's hot centre.
+ *  - 2-4 short forks peel off the core at random points, because a real
+ *    bolt never travels as one clean stroke.
+ */
 export function lightningArc(pools, payload, t) {
   toVec3(payload.position, _pos);
-  toDir(payload.direction, _dir, _fwd);
+  if (payload.target) {
+    _end.set(payload.target.x, payload.target.y ?? _pos.y, payload.target.z);
+  } else {
+    toDir(payload.direction, _dir, _fwd);
+    const guessLength = 3 + (payload.scale ?? 1) * 5;
+    _end.set(_pos.x + _dir.x * guessLength, _pos.y, _pos.z + _dir.z * guessLength);
+  }
   const scale = payload.scale ?? 1;
-  const length = 3 + scale * 5;
+  const dx = _end.x - _pos.x, dz = _end.z - _pos.z;
+  const length = Math.max(0.4, Math.hypot(dx, dz));
+  _dir.set(dx / length, 0, dz / length);
+  const perpX = -_dir.z, perpZ = _dir.x;
   const segments = 10 + Math.round(scale * 6);
+
+  // -- dim halo: wide, soft, laid down first so the core reads brighter by contrast --
+  for (let s = 0; s <= segments; s += 2) {
+    const u = s / segments;
+    const jitter = (1 - Math.abs(u - 0.5) * 2) * 0.35 * scale;
+    const off = (rng.next() * 2 - 1) * jitter;
+    _off.set(
+      _pos.x + _dir.x * length * u + perpX * off,
+      _pos.y + (rng.next() * 2 - 1) * jitter * 0.4,
+      _pos.z + _dir.z * length * u + perpZ * off
+    );
+    pools.glow.spawn(t, {
+      position: _off, velocity: _zero,
+      life: 0.09 + rng.next() * 0.05,
+      sizeStart: 0.24, sizeEnd: 0.0,
+      drag: 3,
+      tint: { r: 0.6, g: 0.85, b: 1.7 },
+      seed: rng.next(),
+    });
+  }
+
+  // -- bright core: tight, hot, jagged --
   for (let s = 0; s <= segments; s++) {
     const u = s / segments;
     const jitter = (1 - Math.abs(u - 0.5) * 2) * 0.35;
-    const perpX = -_dir.z, perpZ = _dir.x;
     const off = (rng.next() * 2 - 1) * jitter;
     _off.set(
       _pos.x + _dir.x * length * u + perpX * off,
@@ -149,9 +239,90 @@ export function lightningArc(pools, payload, t) {
       seed: rng.next(),
     });
   }
-  if (segments > 0) {
-    const endX = _pos.x + _dir.x * length, endZ = _pos.z + _dir.z * length;
-    pools.flash.trigger({ x: endX, y: _pos.y, z: endZ }, { color: 0xbfe6ff, intensity: 30 * scale, distance: 4, life: 0.1 });
+
+  // -- forks: short branches peeling off the core, a real bolt is never one clean stroke --
+  const forkCount = 2 + Math.round(rng.next() * 2);
+  for (let f = 0; f < forkCount; f++) {
+    const u0 = 0.2 + rng.next() * 0.55;
+    const baseX = _pos.x + _dir.x * length * u0 + perpX * ((rng.next() * 2 - 1) * 0.3);
+    const baseZ = _pos.z + _dir.z * length * u0 + perpZ * ((rng.next() * 2 - 1) * 0.3);
+    const forkLen = length * (0.12 + rng.next() * 0.18);
+    const ang = (rng.next() * 2 - 1) * 0.9;
+    const cosA = Math.cos(ang), sinA = Math.sin(ang);
+    const fx = _dir.x * cosA - _dir.z * sinA;
+    const fz = _dir.x * sinA + _dir.z * cosA;
+    const forkSegs = 3 + Math.round(rng.next() * 2);
+    for (let s = 0; s <= forkSegs; s++) {
+      const uu = s / forkSegs;
+      _off.set(
+        baseX + fx * forkLen * uu + (rng.next() * 2 - 1) * 0.06,
+        _pos.y + (rng.next() * 2 - 1) * 0.15,
+        baseZ + fz * forkLen * uu + (rng.next() * 2 - 1) * 0.06
+      );
+      pools.spark.spawn(t, {
+        position: _off, velocity: _zero,
+        life: 0.06 + rng.next() * 0.05,
+        sizeStart: 0.06, sizeEnd: 0.0,
+        drag: 4,
+        tint: { r: 1.3, g: 1.6, b: 3.4 },
+        seed: rng.next(),
+      });
+    }
+  }
+
+  // Terminal flash lands ON the target -- the actual endpoint, not a guess.
+  pools.flash.trigger({ x: _end.x, y: _end.y, z: _end.z }, { color: 0xbfe6ff, intensity: 30 * scale, distance: 4, life: 0.1 });
+}
+
+/**
+ * Frost Nova's expanding ring (frost's sibling to G3/G4's legibility fix):
+ * particles spawned all along a circle of radius 0 with purely radial
+ * outward velocity sized so each one traces exactly `payload.scale` (the
+ * spell's `radius`, NOT a generic magnitude multiplier -- see
+ * skills/index.js's CASTFX.frostnova) over its own short life. Because
+ * displacement with zero drag is just `velocity * age`, the whole ring
+ * reaches the real hit radius at the same instant, reading as a single
+ * expanding shockwave the player can watch and gauge -- rather than
+ * inferring the radius after the fact from who took damage.
+ */
+export function frostRing(pools, payload, t) {
+  toVec3(payload.position, _pos);
+  const radius = Math.max(0.5, payload.scale ?? 4);
+  const life = 0.3;
+  const speed = radius / life;
+  const count = 40;
+  for (let i = 0; i < count; i++) {
+    const ang = (i / count) * Math.PI * 2 + rng.next() * 0.08;
+    const dx = Math.cos(ang), dz = Math.sin(ang);
+    _vel.set(dx * speed, 0, dz * speed);
+    pools.glow.spawn(t, {
+      position: _pos,
+      velocity: _vel,
+      life: life * (0.92 + rng.next() * 0.12),
+      sizeStart: 0.06,
+      sizeEnd: 0.4,
+      drag: 0,
+      tint: { r: 0.55, g: 1.5, b: 3.0 },
+      seed: rng.next(),
+    });
+  }
+  // A second, sparser pass slightly behind the main ring reinforces the
+  // radius read without doubling the particle cost of the main pass.
+  for (let i = 0; i < count / 2; i++) {
+    const ang = (i / (count / 2)) * Math.PI * 2 + rng.next() * 0.2;
+    const dx = Math.cos(ang), dz = Math.sin(ang);
+    const r = radius * (0.85 + rng.next() * 0.1);
+    _vel.set(dx * (r / life), 0, dz * (r / life));
+    pools.spark.spawn(t, {
+      position: _pos,
+      velocity: _vel,
+      life: life * (0.85 + rng.next() * 0.15),
+      sizeStart: 0.04,
+      sizeEnd: 0.0,
+      drag: 0,
+      tint: { r: 1.0, g: 1.9, b: 2.6 },
+      seed: rng.next(),
+    });
   }
 }
 
@@ -170,6 +341,7 @@ export const SKILL_HANDLERS = {
   fireball_travel: fireballTravel,
   fireball_impact: fireballImpact,
   frost_cast: frostCast,
+  frost_ring: frostRing,
   frost_travel: frostTravel,
   frost_impact: frostImpact,
   lightning_cast: lightningCast,

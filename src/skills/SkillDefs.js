@@ -29,7 +29,12 @@ export const SKILLS = {
     range: 12,
     damage: [8, 13],
     burn: { amount: 3, ticks: 3, interval: 0.5, maxStacks: 3 },
-    castFx: 'fireball_cast', impactFx: 'fireball_impact',
+    // Firebolt is a real projectile (G3): it leaves the caster's hand on the
+    // cast's 'impact' animation event, flies for `travel*` below, and only
+    // THEN applies damage/burn/impactFx on arrival -- see src/skills/index.js.
+    castFx: 'fireball_cast', travelFx: 'fireball_travel', impactFx: 'fireball_impact',
+    travelSpeed: 30,          // world units / second
+    travelMin: 0.15, travelMax: 0.3, // clamp so travel always reads, never drags
   },
   arcstorm: {
     id: 'arcstorm', key: 'Digit4', name: 'Arc Storm', role: 'spender',
@@ -48,7 +53,11 @@ export const SKILLS = {
     damage: [6, 10],
     stun: 0.6,
     slow: { duration: 3.0, factor: 0.6 },
-    castFx: 'frost_cast', impactFx: 'frost_impact',
+    // Frost Nova has no travel stage (it is a self-centred AoE, not a
+    // projectile) but still needs to be LEGIBLE -- an expanding ring drawn
+    // at `radius` so the player can see who it caught. See G4's sibling
+    // requirement in ARCHITECTURE.md ("apply the same treatment to frost").
+    castFx: 'frost_cast', ringFx: 'frost_ring', impactFx: 'frost_impact',
   },
 };
 

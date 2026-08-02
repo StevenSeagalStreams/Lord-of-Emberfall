@@ -105,23 +105,110 @@ export function createSkills(ctx) {
   const CASTFX = {
     firebolt: (p, def) => bus?.emit?.('fx:request', { kind: def.castFx, position: headPos(p), scale: 1 }),
     arcstorm: (p, def) => bus?.emit?.('fx:request', { kind: def.castFx, position: headPos(p), scale: 1.2 }),
-    frostnova: (p, def) => bus?.emit?.('fx:request', { kind: def.castFx, position: headPos(p), scale: 1.3 }),
+    frostnova: (p, def) => {
+      bus?.emit?.('fx:request', { kind: def.castFx, position: headPos(p), scale: 1.3 });
+      // G4's sibling fix: an expanding ring so the player can SEE the radius
+      // and who it is about to catch, not just find out from the numbers
+      // afterwards. `scale` here IS the ring's terminal radius, not a generic
+      // magnitude multiplier -- see SkillFX.frostRing's own doc comment.
+      bus?.emit?.('fx:request', { kind: def.ringFx, position: headPos(p), scale: def.radius });
+    },
   };
+
+  // ---- in-flight projectiles ----------------------------------------------
+  // Firebolt no longer resolves on cast (G3): the cast's 'impact' animation
+  // event only LAUNCHES a travelling bolt (launchFirebolt, below); the bolt
+  // itself carries the damage/burn roll and applies it on arrival, in
+  // updateProjectiles(). This is the thing that makes a projectile feel like
+  // a projectile instead of two puffs with nothing between them -- see G3 in
+  // PLAYTEST_FEEDBACK.md and the "Projectile stages" section of
+  // ARCHITECTURE.md.
+  const projectiles = [];
+
+  function findMonsterById(id) {
+    for (const m of world.monsters || []) if (m.id === id) return m;
+    return null;
+  }
+
+  function lerp(a, b, u) { return a + (b - a) * u; }
+
+  /** Launches on the cast's 'impact' animation event (the frame the hand
+   *  releases the bolt) -- NOT a resolve. No target in range still means a
+   *  whiffed builder that visibly casts and hits nothing. */
+  function launchFirebolt(p, def) {
+    const target = pickTarget(p, def.range);
+    if (!target) return;
+    const start = headPos(p);
+    const dest = headPos(target);
+    const dist = Math.hypot(dest.x - start.x, dest.z - start.z) || 0.001;
+    const speed = def.travelSpeed ?? 30;
+    const duration = Math.min(def.travelMax ?? 0.3, Math.max(def.travelMin ?? 0.15, dist / speed));
+    projectiles.push({
+      def, source: p, targetId: target.id,
+      x0: start.x, y0: start.y, z0: start.z,
+      // Re-homing fallback (ARCHITECTURE.md's `targetId`): tracks the live
+      // target's head position every tick below; if the target dies or is
+      // removed from the world before arrival, flight freezes on the last
+      // point it was actually seen at, instead of flying at a stale spot
+      // forever or damaging a target that no longer exists.
+      lastX: dest.x, lastY: dest.y, lastZ: dest.z,
+      t: 0, duration,
+      dmg: rollDamage(def.damage),
+    });
+  }
+
+  /** Advances every in-flight bolt, emits its travel fx for the frame, and
+   *  resolves damage/impact fx exactly once on arrival. Runs every tick
+   *  regardless of animator/input state so a bolt already in the air keeps
+   *  flying even if, say, the caster is stunned the instant after release. */
+  function updateProjectiles(dt) {
+    for (let i = projectiles.length - 1; i >= 0; i--) {
+      const pr = projectiles[i];
+      pr.t += dt;
+      const u = Math.min(1, pr.t / pr.duration);
+
+      const live = findMonsterById(pr.targetId);
+      if (live && live.alive) {
+        const hp = headPos(live);
+        pr.lastX = hp.x; pr.lastY = hp.y; pr.lastZ = hp.z;
+      }
+
+      const curX = lerp(pr.x0, pr.lastX, u);
+      const curY = lerp(pr.y0, pr.lastY, u);
+      const curZ = lerp(pr.z0, pr.lastZ, u);
+
+      bus?.emit?.('fx:request', {
+        kind: pr.def.travelFx,
+        position: { x: curX, y: curY, z: curZ },
+        target: { x: pr.lastX, y: pr.lastY, z: pr.lastZ },
+        scale: 1,
+      });
+
+      if (u >= 1) {
+        projectiles.splice(i, 1);
+        const dl = Math.hypot(pr.lastX - pr.x0, pr.lastZ - pr.z0) || 1;
+        const dir = { x: (pr.lastX - pr.x0) / dl, z: (pr.lastZ - pr.z0) / dl };
+        if (live && live.alive) {
+          live.damage(pr.dmg, pr.source, { direction: dir });
+          live.applyDot?.({
+            amount: pr.def.burn.amount, ticks: pr.def.burn.ticks, interval: pr.def.burn.interval,
+            source: pr.source, maxStacks: pr.def.burn.maxStacks,
+          });
+          bus?.emit?.('fx:request', { kind: pr.def.impactFx, position: headPos(live), direction: { x: dir.x, y: 0, z: dir.z }, scale: 1 });
+        } else {
+          // Target died or was removed mid-flight -- impact at the last
+          // point it was actually seen at rather than hitting nothing.
+          bus?.emit?.('fx:request', { kind: pr.def.impactFx, position: { x: pr.lastX, y: pr.lastY, z: pr.lastZ }, direction: { x: dir.x, y: 0, z: dir.z }, scale: 1 });
+        }
+      }
+    }
+  }
 
   // ---- per-skill resolution (runs on the cast's 'impact' animation event) -
   const RESOLVE = {
-    firebolt(p, def) {
-      const target = pickTarget(p, def.range);
-      if (!target) return; // a whiffed builder still visibly casts, just finds nothing to hit
-      const dir = dirTo(p, target);
-      const dmg = rollDamage(def.damage);
-      target.damage(dmg, p, { direction: dir });
-      target.applyDot?.({
-        amount: def.burn.amount, ticks: def.burn.ticks, interval: def.burn.interval,
-        source: p, maxStacks: def.burn.maxStacks,
-      });
-      bus?.emit?.('fx:request', { kind: def.impactFx, position: headPos(target), direction: { x: dir.x, y: 0, z: dir.z }, scale: 1 });
-    },
+    // Firebolt's 'impact' event only releases the bolt now -- see
+    // launchFirebolt/updateProjectiles above.
+    firebolt: launchFirebolt,
 
     arcstorm(p, def) {
       const hits = hostilesInRadius(p, def.radius);
@@ -129,7 +216,10 @@ export function createSkills(ctx) {
         const dir = dirTo(p, target);
         const dmg = rollDamage(def.damage);
         target.damage(dmg, p, { direction: dir, knockback: def.knockback });
-        bus?.emit?.('fx:request', { kind: def.arcFx, position: headPos(p), direction: { x: dir.x, y: 0, z: dir.z }, scale: 1.2 });
+        // Lightning is instant -- no travel stage -- but it must terminate
+        // ON the victim (G4): `target` is the endpoint every arc actually
+        // spans to, not a hardcoded length down `direction`.
+        bus?.emit?.('fx:request', { kind: def.arcFx, position: headPos(p), direction: { x: dir.x, y: 0, z: dir.z }, target: headPos(target), scale: 1.2 });
         bus?.emit?.('fx:request', { kind: def.impactFx, position: headPos(target), direction: { x: dir.x, y: 0, z: dir.z }, scale: 1 });
       }
     },
@@ -175,6 +265,10 @@ export function createSkills(ctx) {
       for (const id in cooldowns) {
         if (cooldowns[id] > 0) cooldowns[id] = Math.max(0, cooldowns[id] - dt);
       }
+      // Bolts already in flight keep flying regardless of input/player state
+      // -- a projectile that has left the caster's hand does not care that,
+      // say, the caster is stunned the instant after release.
+      updateProjectiles(dt);
       if (!player() || !input) return;
       for (const id in SKILLS) {
         if (input.pressed(SKILLS[id].key)) cast(id);
