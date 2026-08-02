@@ -186,6 +186,42 @@ thing.
 
 Newest first. One entry per session, written against the best gameplay shot.
 
+### 2026-08-02 (later) — the loop closed underground; the characters are the gap
+
+Best shot: `shots/f4/combat.png` — catacombs, five skeletons engaged, hero
+mid-fight. Vision Gate: **1 PASS, 2 PASS, 3 FAIL, 4 FAIL.**
+
+1. **Zone test — PASS.** Cobbled stone, a torch pool, bone. It is unmistakably
+   a catacomb. This is the first frame in the project's history to pass
+   question 1, and it passed by moving underground rather than by fixing the
+   forest — the mandate said interiors dominate and it was right.
+2. **Franchise test — PASS.** Orb HUD, skill bar, torchlit stone, a pack of
+   skeletons closing in. "A dark-fantasy ARPG" is the honest answer.
+3. **Play test — FAIL.** Hero present, five threats present and legibly
+   health-barred, but **no reward cue anywhere in frame.** Nothing drops
+   because items is still a stub. This is a known, deliberate gate-3 gap, so
+   it is not a surprise — but the gate asks whether the frame shows a game,
+   and a fight with no possibility of loot does not.
+4. **Material test — FAIL.** The floor reads as genuine wet cobble and the
+   bone reads as bone, but the walls beyond the torch radius are flat black,
+   and "flat black" is the explicit failure condition. In D1 darkness is a
+   gameplay resource, which means you must see *just enough* — a silhouette,
+   an edge, a suggestion of depth. Here there is simply nothing there.
+
+**Single biggest gap: the characters are stick figures.** They are the subject
+of the frame — five of them, front and centre, nameplated — and at gameplay
+zoom they read as poles with a suggestion of ribcage. Every other element of
+the frame is now carrying its weight and they are not. This is exactly what
+Borka said, twice, in his own words, and it outranks the wall-blackness above.
+
+Next art tasks, in order: land G1/G2 (2x scale, real silhouette, a cloak that
+hangs); then give unlit walls a floor of readable form so darkness reads as
+depth rather than absence; then the reward cue, which arrives with gate 3.
+
+Process note, recorded honestly against rule 1: this session ran four
+gameplay/art tasks (F1 hold-to-move, G3 projectiles, G4 arcs, F4 confirmation)
+against one throwaway measurement script. The ratio held.
+
 ### 2026-08-02 — sun moved off the camera axis
 
 Best shot: `shots/sunfix/wide.png`. Vision Gate: **1 FAIL, 2 FAIL, 3 FAIL, 4 PASS.**

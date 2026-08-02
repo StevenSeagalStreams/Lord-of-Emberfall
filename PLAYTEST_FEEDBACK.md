@@ -145,3 +145,22 @@ Three things the same frame exposes, recorded rather than quietly filed:
 The hero himself is mid-rebuild in the working tree while G1/G2 lands, so this
 capture is **not** valid evidence about the player model or the cloak. That
 needs a fresh capture once the character work is committed.
+
+## Capture evidence — G3 firebolt in flight (2026-08-02)
+
+Two frames 45 ms apart of a **real** Firebolt cast — the shipping
+`skills.cast('firebolt')` path, not the `?fxdemo=1` rotation, because the demo
+rotation would prove nothing about what a player actually sees.
+
+- Frame 0: a bright ember hangs in mid-air, clearly detached from the caster,
+  throwing its own warm light onto the cobbles. Mana has dropped 90 → 85, so
+  the cast happened.
+- Frame 1: the ember has moved right, and there are now **two** glowing points
+  — the core plus its cooling wake.
+- The target skeleton reads **46 / 46 in both frames.** That is the point:
+  damage now lands on arrival, so there is a real interval where the spell is
+  in the world and has not hit yet.
+
+G3 is confirmed rendering. G4's arcs are confirmed in code (endpoint-spanning)
+but not yet in a capture — lightning is instant, so catching one needs a
+tighter capture window than this harness currently takes.
