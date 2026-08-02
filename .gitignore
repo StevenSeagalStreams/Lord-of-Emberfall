@@ -1,0 +1,9 @@
+node_modules/
+dist/
+shots/
+telemetry/
+*.log
+
+# Agent scratch scripts created during iteration.
+*_tmp.mjs
+check_*.mjs
