@@ -23,14 +23,31 @@ Raw feedback as given:
 
 | # | Task | Owner | Status |
 | --- | --- | --- | --- |
-| F1 | **Hold-to-move.** Holding the mouse button moves the character continuously toward the cursor, Diablo-style. Click-to-move alone is wrong for the genre. | combat | open |
+| F1 | **Hold-to-move.** Holding the mouse button moves the character continuously toward the cursor, Diablo-style. Click-to-move alone is wrong for the genre. | combat | **FIXED** — see below |
 | F2 | **Attacks do not hit.** Melee resolved to zero damage. | core | **FIXED** — see below |
-| F3 | **Spells do not hit.** Skill damage is not landing on monsters. | combat | open |
-| F4 | **No monster health readout.** No way to tell how much life a monster has. | ui | open |
-| F5 | **Character not recognisable.** Model needs to read as a class at gameplay zoom; cloak bigger. | characters | open |
-| F6 | **Everything slightly bigger.** Gear changes must be visible — you should see a new weapon or armour piece. | characters | open |
-| F7 | **No restart after death.** The game cannot be continued once you die. | core | open |
-| F8 | **Ghost walk + checkpoints.** WoW-style: die, walk back as a ghost from a checkpoint to your corpse. | core | open |
+| F3 | **Spells do not hit.** Skill damage is not landing on monsters. | combat | **FIXED** — melee auto-swing was starving every cast |
+| F4 | **No monster health readout.** No way to tell how much life a monster has. | ui | built, awaiting visual confirmation |
+| F5 | **Character not recognisable.** Model needs to read as a class at gameplay zoom; cloak bigger. | characters | open — folded into G1/G2 |
+| F6 | **Everything slightly bigger.** Gear changes must be visible — you should see a new weapon or armour piece. | characters | open — folded into G1/G2 |
+| F7 | **No restart after death.** The game cannot be continued once you die. | core | **FIXED** — `src/core/DeathSystem.js` |
+| F8 | **Ghost walk + checkpoints.** WoW-style: die, walk back as a ghost from a checkpoint to your corpse. | core | **FIXED** — `src/core/DeathSystem.js` |
+
+### F1 root cause — the method existed, nothing called it
+
+`Player.orderHold()` was written but never wired: `main.js` still called
+`orderMove`/`orderAttack` on every held frame, and both start a fresh A*. Sixty
+pathfinds a second at a cursor that has barely moved is a real part of what
+"it is not running great" felt like.
+
+Writing the test then found a second bug inside `orderHold` itself. Its repath
+guard treated *"pathIndex is on the last leg"* as *"the path has run out"* —
+true for the entire final stretch of every path and for the whole of any short
+one, so a held cursor just behind a wall re-ran A* on all sixty frames anyway,
+precisely the cost the guard existed to avoid.
+
+Measured with a call-counting nav stub: a second of holding with clear line of
+sight now runs A* **zero** times (it steers straight at the live cursor); a
+blocked hold runs it **under fifteen** times instead of sixty.
 
 ### F2 root cause — my regression, fixed
 
@@ -61,10 +78,10 @@ Verified: stub `{0,0}` now yields base `[14,24]`; gear `+6/+10` yields `[20,34]`
 
 | # | Task | Owner | Status |
 | --- | --- | --- | --- |
-| G1 | **Characters 2x scale + far more detail** — hero and every enemy. | characters | open |
-| G2 | **Cloak reads as a flat board.** Must hang loose and drape down the body, not stand out rigid behind it. | characters | open |
-| G3 | **Fire must fly with a trail.** | vfx + combat | open |
-| G4 | **Lightning must be a line that reaches the target.** | vfx + combat | open |
+| G1 | **Characters 2x scale + far more detail** — hero and every enemy. | characters | in progress |
+| G2 | **Cloak reads as a flat board.** Must hang loose and drape down the body, not stand out rigid behind it. | characters | in progress |
+| G3 | **Fire must fly with a trail.** | vfx + combat | **FIXED** — see below |
+| G4 | **Lightning must be a line that reaches the target.** | vfx + combat | **FIXED** — see below |
 
 ### Root causes found before dispatch
 
@@ -81,3 +98,26 @@ Both are contract gaps as much as art gaps: `fx:request` carried `position` and
 `direction` but no **endpoint**. The contract now carries `target` (and
 optional `targetId` so a projectile can re-home on a moving victim), and
 documents that a travelling spell emits three stages, not two.
+
+### What shipped for G3 / G4
+
+**G3.** Firebolt is a real projectile. The cast's `impact` animation event now
+only *releases* the bolt; the bolt carries its own damage roll and applies it
+**on arrival**, so there is a genuine gap between casting and hitting. It
+re-homes to the live target each tick, and if that target dies mid-flight the
+bolt impacts at the last point it was actually seen at. The trail is
+emission-per-frame rather than a bolted-on system: a hot glow core above 1.0
+radiance so bloom catches it, and a deliberately sub-1.0 dust wake cooling
+behind it.
+
+**G4.** Arcs now span caster to victim exactly — a dim halo pass under a
+bright jagged core, with forks peeling off. Frost Nova, which has neither
+travel nor target and so read as nothing at all, gained an expanding ring at
+its true radius so you can see who it caught rather than inferring it from the
+health bars afterwards.
+
+One consequence worth stating plainly: because damage now lands on arrival
+rather than on cast, **the spells are slightly slower to kill than they were**.
+That is the intended trade — a projectile you can see is a projectile that
+takes time to get there — but it is a feel change, and feel is yours to judge,
+not mine.
