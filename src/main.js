@@ -18,8 +18,10 @@ import { Monster } from './entities/Monster.js';
 import { resolveOverlaps } from './entities/Entity.js';
 
 import { HUD } from './ui/HUD.js';
+import { Settings } from './ui/Settings.js';
 import { DebugConsole } from './core/Console.js';
 import { Telemetry } from './core/Telemetry.js';
+import { PerfMonitor } from './core/PerfMonitor.js';
 import { DeathSystem } from './core/DeathSystem.js';
 
 import { createFX } from './fx/index.js';
@@ -44,7 +46,10 @@ class Game {
     // A URL seed makes screenshots reproducible across critic iterations.
     const params = new URLSearchParams(location.search);
     this.seed = Number(params.get('seed') ?? 20250731) >>> 0;
-    this.qualityName = params.get('quality') ?? 'high';
+    // STABILIZE.md: default to the cheapest preset until 60 FPS is PROVEN on
+    // the real machine. Captures and the critic harness opt into 'ultra'
+    // explicitly via the URL; players start at 'low' and may step up.
+    this.qualityName = params.get('quality') ?? 'low';
     this.paused = params.get('paused') === '1';
     this.zoneName = params.get('zone') ?? DEFAULT_ZONE;
 
@@ -96,7 +101,9 @@ class Game {
     // and hand back a rig override during construction.
     this.lighting = new Lighting(this.scene, {
       shadowSize: this.quality.shadowSize,
-      shadowBudget: 3,
+      // Driven by the preset, and zero below `high` -- see Lighting's own
+      // note on why cube-map point shadows are the expensive thing here.
+      shadowBudget: this.quality.shadowBudget ?? 0,
     });
 
     this._status(`entering the ${this.zoneName}`, 0.45);
@@ -129,6 +136,11 @@ class Game {
     this._status('binding the sigils', 0.94);
     this.postfx = new PostFX(this.renderer, this.scene, this.camera, this.quality);
     this.hud = new HUD(this.uiRoot);
+    this.settings = new Settings(this);
+    // Restore the player's own brightness before the first visible frame, so
+    // it never flashes at the default and then correct itself.
+    this.postfx.loadBrightness();
+    this.settings.brightness.value = String(this.postfx.grade.uniforms.brightness.value);
 
     // The zone owns its own look: colour grade, fog, and light rig bias.
     applyZoneLook(this.zone, this.postfx, this.lighting);
@@ -137,6 +149,10 @@ class Game {
     // context, and is ticked from exactly one phase of the loop below.
     // Playtest instrumentation. Built before the subsystems so telemetry is
     // subscribed to the bus in time to catch their first events.
+    // Frame-rate readout + automatic quality governor (STABILIZE.md rule 0).
+    // Built before the subsystems so it is already sampling during the first
+    // frames, which are the expensive ones.
+    this.perf = new PerfMonitor(this);
     this.telemetry = new Telemetry(this);
     this.console = new DebugConsole(this);
 
@@ -306,6 +322,7 @@ class Game {
     this.postfx.update(dt);
 
     this.hud.update(this.player);
+    this.perf.update(dt);
     this.telemetry.update(dt);
     this._updateDebug(dt);
 

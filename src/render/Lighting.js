@@ -148,11 +148,16 @@ const MIN_OUTDOOR_EXPOSURE = 5.5;
  * Shadow-casting point lights are expensive (6 faces each), so we keep a small
  * budget and assign it dynamically to the emitters nearest the camera target.
  */
+/** Hard ceiling on shadow-casting point lights, ever. Each one re-renders
+ *  the scene six times per frame for its cube map. */
+const MAX_SHADOW_POOL = 2;
+
 export class Lighting {
   constructor(scene, quality = {}) {
     this.scene = scene;
     this.shadowSize = quality.shadowSize ?? 2048;
-    this.shadowBudget = quality.shadowBudget ?? 3;
+    /** Runtime-settable: the auto-downgrade drops this to 0 live. */
+    this.shadowBudget = quality.shadowBudget ?? 0;
 
     // Cold, very dim fill. Ambient is deliberately blue: unlit stone should
     // read as moonlit/mineral, never as flat grey.
@@ -203,11 +208,28 @@ export class Lighting {
 
     /** @type {TorchLight[]} */
     this.torches = [];
+
+    // Shadow-casting *point* lights are the single most expensive thing in
+    // this renderer, and it is not close. A PointLight shadow is a cube map:
+    // the scene is re-rendered SIX times per light, per frame. The old
+    // default budget of 3 meant eighteen extra full scene renders every
+    // frame on top of the key light's own -- on the Intel Iris target that
+    // is the lag, not the post stack.
+    //
+    // STABILIZE.md rule: one shadow-casting light only, the sun/key. So the
+    // budget is now zero on every player-facing preset, and torches light
+    // the room without casting. Losing torch shadows costs some drama in a
+    // frame; keeping them cost the game.
+    // The pool is always built at MAX_SHADOW_POOL, but only `shadowBudget`
+    // slots are ever claimed. An unclaimed slot's light stays `visible=false`
+    // and three.js skips invisible lights entirely when rendering shadow
+    // maps, so an unused slot costs nothing -- and this is what lets the
+    // auto-downgrade drop shadows live, mid-session, without a reload.
     this._shadowPool = [];
-    for (let i = 0; i < this.shadowBudget; i++) {
+    for (let i = 0; i < MAX_SHADOW_POOL; i++) {
       const l = new THREE.PointLight(0xffffff, 0, 1);
       l.castShadow = true;
-      l.shadow.mapSize.set(1024, 1024);
+      l.shadow.mapSize.set(512, 512);
       l.shadow.camera.near = 0.15;
       l.shadow.camera.far = 22;
       l.shadow.bias = -0.004;
@@ -486,7 +508,7 @@ export class Lighting {
       if (this.sky && this.sky.mesh.visible) this.sky.update(dt);
     }
 
-    if (!focus || this._shadowPool.length === 0) return;
+    if (!focus || this.shadowBudget <= 0) return;
 
     // Reassign the shadow budget to the nearest active emitters. Sorting the
     // whole list each frame is fine at dungeon scale and avoids the popping
@@ -495,7 +517,7 @@ export class Lighting {
       .filter((t) => t.castsShadow && t.light.visible && t.intensity > 0.01)
       .map((t) => ({ t, d: t.light.position.distanceToSquared(focus) }))
       .sort((a, b) => a.d - b.d)
-      .slice(0, this._shadowPool.length);
+      .slice(0, Math.min(this.shadowBudget, this._shadowPool.length));
 
     const chosen = new Set(candidates.map((c) => c.t));
     for (const slot of this._shadowPool) {

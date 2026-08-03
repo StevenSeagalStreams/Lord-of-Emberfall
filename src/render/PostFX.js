@@ -24,6 +24,12 @@ const GradeShader = {
   uniforms: {
     tDiffuse:        { value: null },
     exposure:        { value: 1.30 },
+    // Player brightness control (STABILIZE.md P0-2). Deliberately a separate
+    // multiplier rather than folded into `exposure`: zones set exposure on
+    // entry and transient effects (hit flash, low-health) drive it every
+    // frame, so a slider written into that same uniform would be wiped
+    // constantly. This composes on top of all of it and survives.
+    brightness:      { value: 1.0 },
     contrast:        { value: 1.06 },
     saturation:      { value: 1.02 },
     lift:            { value: new THREE.Vector3(0.008, 0.010, 0.018) },
@@ -49,7 +55,7 @@ const GradeShader = {
   fragmentShader: /* glsl */`
     precision highp float;
     uniform sampler2D tDiffuse;
-    uniform float exposure, contrast, saturation;
+    uniform float exposure, brightness, contrast, saturation;
     uniform vec3  lift, gain, shadowTint, highlightTint;
     uniform float shadowTintAmt, highlightAmt;
     uniform float vignette, vignetteSoft, aberration, grain, time;
@@ -107,7 +113,7 @@ const GradeShader = {
         color = texture2D(tDiffuse, uv).rgb;
       }
 
-      color *= exposure;
+      color *= exposure * brightness;
       color = ACESFitted(color);
 
       // lift / gain, then contrast pivoted at mid grey
@@ -196,15 +202,33 @@ export class PostFX {
     this.composer.addPass(this.bloom);
 
     // --- grade -------------------------------------------------------------
+    // --- grade -------------------------------------------------------------
+    // This one pass is the "single cheap composite" STABILIZE.md asks for:
+    // tonemap, lift/gain, split-tone, vignette, grain and chromatic
+    // aberration all happen in one fragment shader over one full-screen
+    // triangle. Grain and vignette are switched off by *uniform*, not by
+    // adding or removing a pass, so turning them off costs nothing extra and
+    // never rebuilds the chain.
     this.grade = new ShaderPass(GradeShader);
     this.grade.uniforms.resolution.value.set(size.x, size.y);
+    /** Authored grain amount, kept so a preset change can restore it after
+     *  a cheaper preset zeroed the uniform. */
+    this.grainBase = this.grade.uniforms.grain.value;
+    this.vignetteBase = this.grade.uniforms.vignette?.value ?? 0;
     if (quality.grain === false) this.grade.uniforms.grain.value = 0;
+    if (quality.vignette === false && this.grade.uniforms.vignette) {
+      this.grade.uniforms.vignette.value = 0;
+    }
     this.composer.addPass(this.grade);
 
     this.output = new OutputPass();
     this.composer.addPass(this.output);
 
+    // SMAA is a full-screen edge-detect plus blend -- two more passes over
+    // every pixel. On the integrated-GPU target that is not worth it, so it
+    // is off below `high` and jaggies are accepted (beauty is rank 7).
     this.smaa = new SMAAPass(size.x, size.y);
+    this.smaa.enabled = quality.smaa !== false;
     this.composer.addPass(this.smaa);
 
     this._time = 0;
@@ -218,6 +242,24 @@ export class PostFX {
 
   /** Push transient looks: hit flashes, low-health desaturation, level intros. */
   setExposure(v) { this.grade.uniforms.exposure.value = v; }
+
+  /**
+   * Player-facing brightness multiplier, 0.6 .. 2.0. Persisted, because a
+   * player who has corrected for their monitor should not have to do it
+   * again on every launch.
+   */
+  setBrightness(v) {
+    const b = Math.min(2.0, Math.max(0.6, Number(v) || 1));
+    this.grade.uniforms.brightness.value = b;
+    try { localStorage.setItem('emberfall.brightness', String(b)); } catch { /* private mode */ }
+  }
+
+  loadBrightness() {
+    let v = 1;
+    try { v = Number(localStorage.getItem('emberfall.brightness')) || 1; } catch { /* private mode */ }
+    this.setBrightness(v);
+    return this.grade.uniforms.brightness.value;
+  }
   setSaturation(v) { this.grade.uniforms.saturation.value = v; }
   setVignette(v) { this.grade.uniforms.vignette.value = v; }
 

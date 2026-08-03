@@ -447,3 +447,75 @@ html, body {
 }
 
 #death-overlay.mode-ghost .death-sub { color: rgba(170, 205, 255, 0.85); }
+
+/* --- performance readout (STABILIZE.md rule 0: always visible in dev) ----- */
+#perf-readout {
+  position: fixed; top: 8px; left: 10px; z-index: 60;
+  display: flex; gap: 10px; align-items: baseline;
+  font: 600 12px/1 ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  letter-spacing: 0.03em;
+  padding: 5px 9px; border-radius: 4px;
+  background: rgba(6, 8, 12, 0.62);
+  border: 1px solid rgba(180, 200, 240, 0.14);
+  color: #9fb0c8; pointer-events: none; user-select: none;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.9);
+}
+#perf-readout .perf-fps.ok   { color: #7fe08a; }
+#perf-readout .perf-fps.warn { color: #f0c46a; }
+#perf-readout .perf-fps.bad  { color: #f07a6a; }
+#perf-readout .perf-low     { opacity: 0.72; }
+#perf-readout .perf-preset  { opacity: 0.55; text-transform: uppercase; }
+
+#perf-notice {
+  position: fixed; top: 44px; left: 10px; z-index: 60; max-width: 420px;
+  font: 500 12px/1.45 system-ui, sans-serif;
+  padding: 8px 11px; border-radius: 4px;
+  background: rgba(10, 12, 18, 0.88);
+  border: 1px solid rgba(240, 196, 106, 0.35);
+  color: #e8dcc4; pointer-events: none;
+}
+
+/* --- settings menu -------------------------------------------------------- */
+#settings-overlay {
+  position: fixed; inset: 0; z-index: 80; display: grid; place-items: center;
+  background: rgba(2, 3, 6, 0.72);
+  font: 400 14px/1.5 system-ui, sans-serif; color: #d8dde8;
+}
+#settings-overlay .settings-panel {
+  min-width: 340px; padding: 22px 26px; border-radius: 6px;
+  background: linear-gradient(180deg, #14171f, #0d1015);
+  border: 1px solid rgba(180, 200, 240, 0.18);
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.7);
+}
+#settings-overlay h2 {
+  margin: 0 0 16px; font-size: 15px; font-weight: 700;
+  letter-spacing: 0.14em; text-transform: uppercase; color: #c8a86a;
+}
+#settings-overlay .settings-row { margin-bottom: 18px; }
+#settings-overlay label {
+  display: block; margin-bottom: 7px; font-size: 12px;
+  letter-spacing: 0.06em; text-transform: uppercase; color: #8e9ab0;
+}
+#settings-overlay .preset-buttons { display: flex; gap: 8px; }
+#settings-overlay .preset-buttons button {
+  flex: 1; padding: 8px 0; cursor: pointer;
+  font: 600 12px/1 system-ui, sans-serif; text-transform: uppercase;
+  letter-spacing: 0.08em; color: #b6c0d2;
+  background: #1b1f28; border: 1px solid rgba(180, 200, 240, 0.16);
+  border-radius: 3px;
+}
+#settings-overlay .preset-buttons button:hover { background: #232833; }
+#settings-overlay .preset-buttons button.active {
+  background: #3a2f18; border-color: #c8a86a; color: #f0dfae;
+}
+#settings-overlay input[type="range"] { width: 100%; }
+#settings-overlay .settings-hint {
+  font-size: 11px; color: #71809a; margin-top: 6px;
+}
+#settings-overlay .settings-close {
+  width: 100%; margin-top: 6px; padding: 9px 0; cursor: pointer;
+  font: 600 12px/1 system-ui, sans-serif; text-transform: uppercase;
+  letter-spacing: 0.1em; color: #d8dde8;
+  background: #232833; border: 1px solid rgba(180, 200, 240, 0.2);
+  border-radius: 3px;
+}
