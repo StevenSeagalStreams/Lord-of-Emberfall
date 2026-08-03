@@ -519,3 +519,15 @@ html, body {
   background: #232833; border: 1px solid rgba(180, 200, 240, 0.2);
   border-radius: 3px;
 }
+
+/* --- ground drop labels (STABILIZE.md P0-4: beam + ground label) ---------- */
+#drop-label-layer { position: fixed; inset: 0; z-index: 45; pointer-events: none; }
+.drop-label {
+  position: absolute; left: 0; top: 0;
+  transform-origin: 0 0; translate: -50% -100%;
+  font: 600 12px/1 system-ui, sans-serif; letter-spacing: 0.02em;
+  white-space: nowrap; padding: 2px 6px; border-radius: 3px;
+  background: rgba(4, 5, 8, 0.78);
+  border: 1px solid rgba(255, 255, 255, 0.13);
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 1);
+}

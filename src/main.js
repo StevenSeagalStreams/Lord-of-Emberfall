@@ -357,7 +357,19 @@ class Game {
       if (hostile) {
         this.player.orderHold(this.player.position.x, this.player.position.z, this.world.nav, hostile);
       } else if (input.groundValid) {
-        this.player.orderHold(input.ground.x, input.ground.z, this.world.nav, null);
+        // A fresh click may be aimed at a drop. Only the press edge is
+        // offered to the item layer -- with hold-to-move, testing every held
+        // frame would re-collect and re-walk continuously.
+        let consumed = false;
+        if (input.mousePressed('left')) {
+          const r = this.items?.handleClick?.(input.ground.x, input.ground.z, this.player);
+          if (r === true) consumed = true;
+          else if (r && r.walkTo) {
+            this.player.orderHold(r.walkTo.x, r.walkTo.z, this.world.nav, null);
+            consumed = true;
+          }
+        }
+        if (!consumed) this.player.orderHold(input.ground.x, input.ground.z, this.world.nav, null);
       }
     }
 
