@@ -33,6 +33,8 @@ export class Animator {
 
     this.phase = Math.random() * Math.PI * 2;
     this.speed = 0;             // world units/sec, set by the entity
+    /** 0 = idle pose, 1 = full locomotion. Eased, never switched. */
+    this._locoBlend = 0;
     this.strideLength = merged.strideLength ?? 1.35;
     this.bounce = merged.bounce ?? 1.0;
     this.weight = merged.weight ?? 1.0;     // heavier = slower, lower arcs
@@ -139,14 +141,31 @@ export class Animator {
 
     // --- locomotion base layer ---------------------------------------------
     const gait = THREE.MathUtils.clamp(speed / 4.2, 0, 1.6);
-    // Stride frequency rises with the square root of speed, which is how real
-    // gait works -- doubling speed does not double cadence, it lengthens the
-    // stride too.
-    const freq = (1.1 + Math.sqrt(gait) * 2.6) / Math.max(0.6, this.weight * 0.5 + 0.5);
-    this.phase += dt * freq * Math.PI * 2;
 
-    if (gait > 0.02) {
-      this._poseWalk(gait);
+    // P0-3: cadence is driven by DISTANCE COVERED, not by a frequency curve.
+    // The old cadence rose with sqrt(speed) via a hand-tuned constant, which
+    // has no relationship to how far the feet actually travel -- so the
+    // contact point drifted against the ground at every speed except the one
+    // it happened to be tuned at, and that drift is foot slide. Advancing the
+    // phase by (distance / strideDistance) makes one full cycle cover exactly
+    // one stride by construction, at any speed, including while slowed or
+    // while being knocked back.
+    const strideDist = Math.max(0.4, this.rig?.spec?.height ?? 1.85) * STRIDE_PER_HEIGHT;
+    this.phase += (speed * dt / strideDist) * Math.PI * 2;
+
+    // Blend idle <-> locomotion rather than switching at a threshold. The old
+    // hard cut at gait 0.02 popped the whole skeleton between two unrelated
+    // poses on the frame you started or stopped moving. ~0.15s, per the
+    // acceptance criteria.
+    const wantLoco = gait > 0.02 ? 1 : 0;
+    const k = 1 - Math.exp(-dt / LOCO_BLEND_TAU);
+    this._locoBlend += (wantLoco - this._locoBlend) * k;
+
+    if (this._locoBlend > 0.001) {
+      // Amplitude carries the blend, so at blend 0 the walk pose contributes
+      // nothing and the rig sits in the idle pose it was already given.
+      this._poseIdle();
+      this._poseWalk(gait * this._locoBlend);
     } else {
       this._poseIdle();
       this._feet.L.planted = false;
@@ -580,6 +599,13 @@ export class Animator {
     }
   }
 }
+
+/** Distance one full gait cycle covers, as a fraction of character height.
+ *  A human's stride is a little under body height per cycle; this is what
+ *  ties cadence to ground speed so the feet cannot slide. */
+const STRIDE_PER_HEIGHT = 0.62;
+/** Idle<->locomotion blend time constant, ~0.15s per the P0-3 criteria. */
+const LOCO_BLEND_TAU = 0.15;
 
 const _ikTarget = new THREE.Vector3();
 const _fkThighQ = new THREE.Quaternion();

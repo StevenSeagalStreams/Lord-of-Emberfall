@@ -443,6 +443,10 @@ export class Entity {
     }
 
     // --- collision-aware move ----------------------------------------------
+    // Remembered so the animator can be driven by distance ACTUALLY covered
+    // rather than by intended velocity -- see the `speed` passed to
+    // animator.update() at the end of this method.
+    const preX = this.position.x, preZ = this.position.z;
     const nx = this.position.x + (this.velocity.x + kx) * sdt;
     const nz = this.position.z + (this.velocity.z + kz) * sdt;
     // `noclip` is set by the debug console (src/core/Console.js) straight
@@ -478,7 +482,16 @@ export class Entity {
     this.facing += turn;
     this.object.rotation.y = this.facing;
 
-    this.animator?.update(sdt, { speed: this.speed, facing: this.facing });
+    // P0-3, the foot-slide fix. `this.speed` is the velocity the entity WANTS;
+    // it is not what happened. Walk into a wall and velocity stays high while
+    // the body does not move at all, so the legs sprint on the spot -- which
+    // is a large part of what reads as a broken run. Feeding measured
+    // displacement instead means the gait can only ever animate as fast as
+    // the character genuinely travels.
+    const movedX = this.position.x - preX;
+    const movedZ = this.position.z - preZ;
+    const actualSpeed = sdt > 1e-6 ? Math.hypot(movedX, movedZ) / sdt : 0;
+    this.animator?.update(sdt, { speed: actualSpeed, facing: this.facing });
     this._emitFootstepFx(sdt);
   }
 

@@ -1021,6 +1021,64 @@ console.log('\n[14] hold-to-move -- holding the button steers continuously witho
 }
 
 // ---------------------------------------------------------------------------
+console.log('\n[15] run animation -- cadence tracks ground covered, transitions blend (P0-3)');
+// ---------------------------------------------------------------------------
+{
+  const DT = 1 / 60;
+
+  // The foot-slide test. If cadence is tied to distance, then the gait phase
+  // advanced over a move must be proportional to the distance travelled, at
+  // ANY speed -- that proportionality IS "the feet do not slide". The old
+  // frequency curve rose with sqrt(speed), so phase-per-metre changed with
+  // speed and the contact point drifted at every speed but one.
+  function phasePerMetre(speed) {
+    // A real Player, because it builds a real rig headlessly (see [12]) and
+    // the cadence maths reads rig.spec.height.
+    const e = new Player();
+    e.moveSpeed = speed;
+    e.acceleration = 1000;
+    e.friction = 1000;
+    e.setPath([{ x: 400, z: 0 }]);
+    const x0 = e.position.x;
+    const p0 = e.animator.phase;
+    for (let i = 0; i < 90; i++) e.update(DT, { colliders: null });
+    const dist = Math.abs(e.position.x - x0);
+    return dist > 0.01 ? (e.animator.phase - p0) / dist : 0;
+  }
+
+  const slow = phasePerMetre(2.0);
+  const fast = phasePerMetre(6.0);
+  check('the gait advances at all while walking', slow > 0);
+  check('phase per metre is the SAME at 2 m/s and 6 m/s (no foot slide at any speed)',
+    slow > 0 && Math.abs(fast - slow) / slow < 0.02,
+    `${slow.toFixed(3)} vs ${fast.toFixed(3)} rad/m`);
+
+  // Running into a wall must not animate a sprint on the spot: the animator
+  // is fed measured displacement, so a blocked entity's gait must freeze.
+  const solid = { isBlocked: () => true };
+  const stuck = new Player();
+  stuck.moveSpeed = 5; stuck.acceleration = 1000; stuck.friction = 1000;
+  stuck.setPath([{ x: 40, z: 0 }]);
+  for (let i = 0; i < 20; i++) stuck.update(DT, { colliders: solid });
+  const phaseWall = stuck.animator.phase;
+  for (let i = 0; i < 40; i++) stuck.update(DT, { colliders: solid });
+  check('an entity blocked by a wall does not run on the spot',
+    Math.abs(stuck.animator.phase - phaseWall) < 1e-6);
+
+  // Idle <-> locomotion is eased, never switched.
+  const mover = new Player();
+  mover.moveSpeed = 5; mover.acceleration = 1000; mover.friction = 1000;
+  mover.setPath([{ x: 60, z: 0 }]);
+  mover.update(DT, { colliders: null });
+  check('the locomotion blend does not snap to 1 on the first moving frame',
+    mover.animator._locoBlend > 0 && mover.animator._locoBlend < 0.5,
+    `${mover.animator._locoBlend.toFixed(3)}`);
+  for (let i = 0; i < 30; i++) mover.update(DT, { colliders: null });
+  check('...and reaches full locomotion within ~0.5s of running',
+    mover.animator._locoBlend > 0.9, `${mover.animator._locoBlend.toFixed(3)}`);
+}
+
+// ---------------------------------------------------------------------------
 console.log(`\n${pass} passed, ${fail} failed`);
 if (fail > 0) {
   console.log('Failures:', failures.join(', '));
