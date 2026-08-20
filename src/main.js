@@ -37,6 +37,16 @@ import { createSkills } from './skills/index.js';
  * below -- the ordering of those phases is load-bearing (input before AI,
  * AI before physics, physics before camera, camera before render).
  */
+/** Overhead hero lamp height, as a multiple of the hero's VISIBLE height --
+ *  never a hardcoded world unit, which is how it ended up inside his chest
+ *  when the art doubled in size. */
+const HERO_LIGHT_HEAD_CLEAR = 1.35;
+/** Starting height before a player exists. */
+const HERO_LIGHT_HEIGHT = 5.0;
+/** How far in front of the hero (toward the camera) the fill lamp sits.
+ *  Far enough back that its falloff across the body is nearly flat. */
+const HERO_FILL_DISTANCE = 4.2;
+
 class Game {
   constructor() {
     this.canvas = document.getElementById('viewport');
@@ -129,9 +139,28 @@ class Game {
     // light riding the player so the character stays readable in unlit
     // stretches. Without it the hero vanishes between torches, which reads as
     // a bug rather than as atmosphere.
-    this.heroLight = new THREE.PointLight(0xffd2a0, 14, 11, 2.0);
-    this.heroLight.position.set(0, 2.2, 0);
+    // P0-2 requires the hero, aggroed enemies, drops and walkable floor to be
+    // readable within ~1.5 screen-heights. At this camera that is roughly 26
+    // world units, so an 11-unit radius could not possibly satisfy it. Decay
+    // is eased off pure inverse-square (2.0 -> 1.45) as well: inverse-square
+    // is physically right and practically useless here, because it dumps
+    // almost all its light in the first few units and leaves the mid-range --
+    // exactly where you fight -- dark.
+    this.heroLight = new THREE.PointLight(0xffd2a0, 30, 22, 1.45);
+    this.heroLight.position.set(0, HERO_LIGHT_HEIGHT, 0);
     this.scene.add(this.heroLight);
+
+    // A second, dimmer lamp in FRONT of the hero. The overhead light lights
+    // the room; this one lights the character. Without it he is lit only from
+    // directly above and reads as a dark mass with a bright scalp -- which is
+    // precisely what the first P0-2 capture showed.
+    // Weak, wide and well back. A first pass at this sat 1.6 units away at
+    // intensity 9 and produced a blown-out hotspot on whatever surface it was
+    // nearest -- a fill light's whole job is to be unnoticeable, so any
+    // visible bright spot means it is wrong. Low intensity, long radius and a
+    // gentle decay spread it across the whole figure instead.
+    this.heroFill = new THREE.PointLight(0xffe0bc, 3.2, 16, 1.1);
+    this.scene.add(this.heroFill);
 
     this._status('binding the sigils', 0.94);
     this.postfx = new PostFX(this.renderer, this.scene, this.camera, this.quality);
@@ -314,7 +343,24 @@ class Game {
     // fx phase: after the world has settled, before the camera reads it.
     for (const s of this.subsystems) s?.update?.(dt);
 
-    this.heroLight.position.set(this.player.position.x, 2.2, this.player.position.z);
+    // The overhead lamp must clear the hero's actual head. It used to sit at
+    // a hardcoded 2.2, which was above a 1.9-unit character but is INSIDE the
+    // chest of the 3.8-unit one G1 produced -- so it blew out his torso and
+    // left everything else unlit. Derived from the rig now, so it can never
+    // drift out of sync with the art again.
+    const p = this.player.position;
+    this.heroLight.position.set(p.x, this.player.visualHeight * HERO_LIGHT_HEAD_CLEAR, p.z);
+
+    // The fill sits between the hero and the camera, at chest height, so the
+    // side of him the player can actually see is the side that is lit.
+    // Same (cos, sin) convention CameraRig uses for its own offset, so this
+    // tracks the camera exactly if the azimuth is ever changed.
+    const az = this.rig.azimuth;
+    this.heroFill.position.set(
+      p.x + Math.cos(az) * HERO_FILL_DISTANCE,
+      this.player.visualHeight * 0.95,
+      p.z + Math.sin(az) * HERO_FILL_DISTANCE
+    );
 
     this.rig.setTarget(this.player.position);
     this.rig.update(dt, this.input.groundValid ? this.input.ground : null);

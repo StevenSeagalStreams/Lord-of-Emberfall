@@ -55,8 +55,14 @@ export async function createCatacombs(ctx) {
     bounds: { minX: 0, maxX: dungeon.width * TILE, minZ: 0, maxZ: dungeon.height * TILE },
     fog: { color: 0x05070c, density: 0.0135 },
     // Cold, crushed, high-contrast. The catacombs should feel airless.
+    // Contrast pivots at 0.18 and DARKENS everything below it, and almost
+    // every pixel of a torchlit dungeon sits below 0.18 -- so a contrast of
+    // 1.10 was actively crushing the play space toward black while doing
+    // nothing for the highlights. Backed off to just above neutral, with the
+    // exposure raised to compensate. The vignette is untouched: screen edges
+    // are the one place the mandate still wants near-black.
     grade: {
-      exposure: 1.30, contrast: 1.10, saturation: 0.96,
+      exposure: 1.62, contrast: 1.02, saturation: 0.98,
       shadowTint: [0.26, 0.36, 0.62], shadowTintAmt: 0.18,
       highlightTint: [1.00, 0.84, 0.58], highlightAmt: 0.12,
       vignette: 0.58,

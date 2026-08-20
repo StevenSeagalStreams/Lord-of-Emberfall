@@ -23,6 +23,12 @@ const GHOST_SPEED_MULT = 1.35;   // faster than living -- the walk is a tax, not
 const RECLAIM_RADIUS = 2.2;      // how close the spirit must get to its corpse
 const RELEASE_DELAY = 1.6;       // beat on the death screen before release is offered
 const CHECKPOINT_TOUCH_RADIUS = 3.0;
+/** How far the entrance shrine sits from the player's spawn square, so it
+ *  never renders on top of the hero. A first pass used 4.5, which moved the
+ *  shrine off the player but left it close enough that its bloom still ate
+ *  the hero's local exposure -- at gameplay framing it read as a blob stuck
+ *  to his shoulder. Far enough now to be a landmark you walk to. */
+const ENTRANCE_SHRINE_OFFSET = 9.0;
 
 export class DeathSystem {
   constructor(game) {
@@ -69,7 +75,19 @@ export class DeathSystem {
   }
 
   _deriveCheckpoints(zone) {
-    const out = [zone.spawnPoint.clone()];
+    // The entrance shrine is deliberately NOT placed on the spawn point.
+    // It used to be, and since the player also starts there, a lit stone
+    // pillar with an above-1.0-radiance flame was rendering directly on top
+    // of the hero -- which is what made him unreadable in every capture taken
+    // at spawn. It read as a blown-out white blob attached to his shoulder,
+    // and it survived several wrong diagnoses (a backlighting torch, then my
+    // own fill light) before the shrine turned out to be the thing.
+    //
+    // Offset along +X so it still reads as "the entrance shrine" without
+    // occupying the same square metre as the player.
+    const spawn = zone.spawnPoint.clone();
+    spawn.x += ENTRANCE_SHRINE_OFFSET;
+    const out = [spawn];
     const rooms = zone.dungeon?.rooms;
     if (rooms && rooms.length) {
       const TILE = 2.0;
@@ -111,11 +129,15 @@ export class DeathSystem {
     // read as a beacon across a dark room.
     const flame = new THREE.Mesh(
       new THREE.SphereGeometry(0.18, 10, 8),
-      new THREE.MeshBasicMaterial({ color: new THREE.Color(2.4, 1.5, 0.5), fog: false })
+      // Above 1.0 so bloom still catches it, but well down from 2.4: at that
+      // radiance it was not a beacon, it was a light source that flattened
+      // everything near it. Readability of the PLAYER outranks the drama of
+      // a prop (STABILIZE.md priority order: readability is rank 3, beauty 7).
+      new THREE.MeshBasicMaterial({ color: new THREE.Color(1.35, 0.85, 0.32), fog: false })
     );
     flame.position.set(p.x, p.y + 1.7, p.z);
 
-    const light = new THREE.PointLight(0xffc070, 9, 12, 2);
+    const light = new THREE.PointLight(0xffc070, 6, 11, 1.9);
     light.position.copy(flame.position);
 
     this.game.scene.add(stone, flame, light);

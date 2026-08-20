@@ -161,17 +161,28 @@ export class Lighting {
 
     // Cold, very dim fill. Ambient is deliberately blue: unlit stone should
     // read as moonlit/mineral, never as flat grey.
-    this.hemi = new THREE.HemisphereLight(0x2a3a56, 0x0a0a10, 0.55);
+    // STABILIZE.md P0-2: darkness is a mood, never an information failure.
+    // These two fills are the readability floor for the whole dungeon
+    // register -- they are what makes walkable floor legible between torch
+    // pools. Raised substantially from the original "sourced light only"
+    // values, which produced a frame the director could not play: the hero,
+    // enemies and drops all vanished the moment they left a torch radius.
+    // The mood is preserved by the palette staying cold and blue and by the
+    // vignette keeping the screen EDGES near-black -- which is exactly where
+    // the mandate says near-black belongs.
+    this.hemi = new THREE.HemisphereLight(0x33465e, 0x141a24, 1.05);
     scene.add(this.hemi);
 
-    this.ambient = new THREE.AmbientLight(0x141c2c, 0.45);
+    this.ambient = new THREE.AmbientLight(0x24304a, 1.15);
     scene.add(this.ambient);
 
     // A weak key from above-behind. Not a sun -- it exists to keep silhouettes
     // legible when the player walks through an unlit stretch of dungeon. It
     // stands down whenever applyRig() switches a zone into the outdoor
     // register, where `sun` takes over as key.
-    this.key = new THREE.DirectionalLight(0x8095c0, 0.85);
+    // Also raised: with torch shadows gone (P0-1) this is the only shadow
+    // caster left, so it carries the whole job of giving shape to a room.
+    this.key = new THREE.DirectionalLight(0x8095c0, 1.45);
     this.key.position.set(-24, 40, -18);
     this.key.castShadow = true;
     this.key.shadow.mapSize.set(this.shadowSize, this.shadowSize);
